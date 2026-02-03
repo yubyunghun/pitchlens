@@ -1,0 +1,9 @@
+video:
+  input: data/raw/match.mp4
+  output: outputs/annotated.mp4
+detection:
+  model: yolov8x.pt        # swap for a football-finetuned model later
+  confidence: 0.3
+pitch:
+  length_m: 105
+  width_m: 68

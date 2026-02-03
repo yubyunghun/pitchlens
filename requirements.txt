@@ -1,0 +1,10 @@
+ultralytics>=8.3.0      # YOLO detection
+opencv-python>=4.10     # video I/O, homography, drawing
+supervision>=0.25       # ByteTrack tracking + annotators
+numpy>=1.26
+scikit-learn>=1.5       # KMeans team-color clustering
+scipy>=1.13             # Voronoi / spatial helpers for passing lanes
+pandas>=2.2
+matplotlib>=3.9
+pyyaml>=6.0
+tqdm>=4.66
