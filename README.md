@@ -27,5 +27,13 @@ outputs/          annotated videos and reports
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .
 ```
+
+## Run player tracking
+Put a clip at `data/raw/match.mp4`, then:
+```bash
+pitchlens-track                                   # uses configs/default.yaml
+pitchlens-track --input data/raw/clip.mp4 --output outputs/clip.mp4
+```
+Output: each player gets an ellipse in their team's color and a tracking ID; referees show as `REF` and the ball gets a triangle marker.
