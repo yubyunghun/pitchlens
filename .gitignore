@@ -22,3 +22,7 @@ outputs/*
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Per-video calibration output
+configs/calibration*.json
+configs/calibration*.png

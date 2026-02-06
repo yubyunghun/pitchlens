@@ -11,6 +11,7 @@ dynamic = ["dependencies"]
 
 [project.scripts]
 pitchlens-track = "pitchlens.pipeline:main"
+pitchlens-calibrate = "pitchlens.calibration.tool:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
