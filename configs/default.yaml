@@ -6,6 +6,10 @@ detection:
   confidence: 0.3          # players / referees
   ball_confidence: 0.15    # ball is small, so allow lower confidence
   device: null             # null = auto, or "cpu", "0" for first GPU
-pitch:
-  length_m: 105
-  width_m: 68
+calibration:
+  path: configs/calibration.json   # created by pitchlens-calibrate; skipped if missing
+minimap:
+  enabled: true
+  width_fraction: 0.3      # minimap width as a fraction of the video width
+export:
+  tracks_csv: outputs/tracks.csv   # per-frame player positions (pixels + meters)

@@ -14,6 +14,12 @@ UNKNOWN_COLOR = (200, 200, 200)
 BALL_COLOR = (255, 255, 255)
 
 
+def player_color(cls: int, team: int, team_colors: dict[int, tuple[int, int, int]]) -> tuple[int, int, int]:
+    if cls == REFEREE:
+        return REFEREE_COLOR
+    return team_colors.get(int(team), UNKNOWN_COLOR) if team != UNKNOWN else UNKNOWN_COLOR
+
+
 def _draw_player(frame, box, color, label):
     x1, y1, x2, y2 = box.astype(int)
     cx, w = (x1 + x2) // 2, x2 - x1
@@ -30,12 +36,8 @@ def annotate(frame: np.ndarray, players: sv.Detections, teams: np.ndarray,
              team_colors: dict[int, tuple[int, int, int]], ball: sv.Detections) -> np.ndarray:
     out = frame.copy()
     for box, cls, tid, team in zip(players.xyxy, players.class_id, players.tracker_id, teams):
-        if cls == REFEREE:
-            color, label = REFEREE_COLOR, "REF"
-        else:
-            color = team_colors.get(int(team), UNKNOWN_COLOR) if team != UNKNOWN else UNKNOWN_COLOR
-            label = f"{'GK ' if cls == GOALKEEPER else ''}{int(tid)}"
-        _draw_player(out, box, color, label)
+        label = "REF" if cls == REFEREE else f"{'GK ' if cls == GOALKEEPER else ''}{int(tid)}"
+        _draw_player(out, box, player_color(cls, team, team_colors), label)
 
     for box in ball.xyxy:
         x1, y1, x2, _ = box.astype(int)
