@@ -72,6 +72,18 @@ def test_ignores_moving_players_via_mask():
     assert _max_point_error(res.H, cam2 @ np.linalg.inv(cam1)) < 1.0
 
 
+def test_fast_accelerating_pan_followed_with_motion_guess():
+    world = _pitch_texture(3)
+    xs = np.cumsum([0, 20, 45, 75, 105, 135, 150])   # pan speeds up to 150 px/frame
+    tracker = CameraMotionTracker()
+    tracker.update(_view(world, _camera(100 + xs[0], 150)))
+    for a, b in zip(xs[:-1], xs[1:]):
+        c1, c2 = _camera(100 + a, 150), _camera(100 + b, 150)
+        res = tracker.update(_view(world, c2))
+        assert res is not None, f"lost track at {b - a} px/frame"
+        assert _max_point_error(res.H, c2 @ np.linalg.inv(c1)) < 1.0
+
+
 def test_static_camera_is_identity():
     f = _view(_pitch_texture(2), _camera(100, 100))
     g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)

@@ -46,14 +46,26 @@ class CameraMotionEstimator:
         self.min_inlier_ratio = min_inlier_ratio
 
     def estimate(self, prev_gray: np.ndarray, curr_gray: np.ndarray, prev_mask: np.ndarray,
-                 curr_mask: np.ndarray | None = None) -> MotionResult | None:
-        """Homography prev -> curr, or None if there isn't enough reliable texture."""
+                 curr_mask: np.ndarray | None = None, guess: np.ndarray | None = None) -> MotionResult | None:
+        """Homography prev -> curr, or None if there isn't enough reliable texture.
+
+        guess: expected motion (e.g. the previous frame's H). Optical flow starts its
+        search there, which lets it follow fast pans it would otherwise lose.
+        """
         pts = cv2.goodFeaturesToTrack(prev_gray, mask=prev_mask, **self.feature_params)
         if pts is None or len(pts) < self.min_inliers:
             return None
 
-        fwd, st1, _ = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, pts, None, **self.lk_params)
-        back, st2, _ = cv2.calcOpticalFlowPyrLK(curr_gray, prev_gray, fwd, None, **self.lk_params)
+        if guess is not None:
+            init = cv2.perspectiveTransform(pts, guess).astype(np.float32)
+            fwd, st1, _ = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, pts, init,
+                                                   flags=cv2.OPTFLOW_USE_INITIAL_FLOW, **self.lk_params)
+            init_back = cv2.perspectiveTransform(fwd, np.linalg.inv(guess)).astype(np.float32)
+            back, st2, _ = cv2.calcOpticalFlowPyrLK(curr_gray, prev_gray, fwd, init_back,
+                                                    flags=cv2.OPTFLOW_USE_INITIAL_FLOW, **self.lk_params)
+        else:
+            fwd, st1, _ = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, pts, None, **self.lk_params)
+            back, st2, _ = cv2.calcOpticalFlowPyrLK(curr_gray, prev_gray, fwd, None, **self.lk_params)
         fb_error = np.linalg.norm((pts - back).reshape(-1, 2), axis=1)
         good = (st1.ravel() == 1) & (st2.ravel() == 1) & (fb_error < self.fb_threshold)
 
@@ -84,6 +96,7 @@ class CameraMotionTracker:
         self.estimator = estimator or CameraMotionEstimator()
         self._prev_gray: np.ndarray | None = None
         self._prev_mask: np.ndarray | None = None
+        self._last_H: np.ndarray | None = None  # last successful motion, used as the next guess
 
     def update(self, frame: np.ndarray, exclude_boxes: np.ndarray | None = None) -> MotionResult | None:
         """Motion from the previous frame to this one (None on the first frame or on failure)."""
@@ -91,6 +104,11 @@ class CameraMotionTracker:
         mask = background_mask(frame, exclude_boxes)
         result = None
         if self._prev_gray is not None:
-            result = self.estimator.estimate(self._prev_gray, gray, self._prev_mask, mask)
+            result = None
+            if self._last_H is not None:  # camera usually keeps moving the way it was
+                result = self.estimator.estimate(self._prev_gray, gray, self._prev_mask, mask, self._last_H)
+            if result is None:
+                result = self.estimator.estimate(self._prev_gray, gray, self._prev_mask, mask)
+            self._last_H = result.H if result is not None else None
         self._prev_gray, self._prev_mask = gray, mask
         return result
