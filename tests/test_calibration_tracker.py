@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 
 from pitchlens.calibration.camera_motion import CameraMotionTracker, MotionResult
-from pitchlens.calibration.calibration_tracker import CalibrationTracker
+from pitchlens.calibration.calibration_tracker import CalibrationTracker, is_plausible_motion
 from pitchlens.calibration.homography import PitchCalibration
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -60,6 +60,29 @@ def test_lost_after_too_many_failures_and_reset():
     assert tracker.update(_motion(cam, cam)) is None        # stays lost until re-anchored
     tracker.reset(_calib_for(cam))
     assert tracker.update(_motion(cam, cam)) is not None
+
+
+def test_plausibility_check():
+    size = (960, 540)
+    shift = lambda dx: np.array([[1, 0, dx], [0, 1, 0], [0, 0, 1]], float)
+    zoom = lambda z: np.array([[z, 0, 480 * (1 - z)], [0, z, 270 * (1 - z)], [0, 0, 1]], float)
+    assert is_plausible_motion(np.eye(3), size)
+    assert is_plausible_motion(shift(150), size)           # fast pan
+    assert is_plausible_motion(zoom(1.05), size)           # zooming in
+    assert not is_plausible_motion(shift(500), size)       # jump of half the frame
+    assert not is_plausible_motion(zoom(1.5), size)        # sudden 50% zoom
+    assert not is_plausible_motion(np.diag([-1.0, 1, 1]), size)  # mirrored
+
+
+def test_camera_cut_does_not_corrupt_calibration():
+    cams = [_camera(200 + 10 * t, 150) for t in range(5)]
+    tracker = CalibrationTracker(_calib_for(cams[0]))
+    tracker.update(_motion(cams[0], cams[1]))
+    tracker.update(_motion(cams[1], cams[2]))
+    cut = MotionResult(np.array([[2.0, 0.3, -400], [0.1, 1.8, -200], [0, 0, 1]]), 100, 90)
+    calib = tracker.update(cut)                            # rejected -> predicted instead
+    assert tracker.lost_frames == 1
+    assert _error_m(calib, cams[3], PLAYERS) < 1e-6
 
 
 def test_end_to_end_with_optical_flow_drift():
