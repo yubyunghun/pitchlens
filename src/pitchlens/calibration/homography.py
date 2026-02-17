@@ -75,8 +75,8 @@ class PitchCalibration:
         corr = [{**c, "image": [c["image"][0] / sx, c["image"][1] / sy]} for c in self.correspondences]
         return PitchCalibration(self.H @ S, (width, height), self.pitch, corr)
 
-    def save(self, path: str | Path, **meta) -> None:
-        data = {
+    def to_dict(self, **meta) -> dict:
+        return {
             "homography": self.H.tolist(),
             "image_size": list(self.image_size),
             "pitch": {"length": self.pitch.length, "width": self.pitch.width},
@@ -84,11 +84,16 @@ class PitchCalibration:
             "mean_error_m": float(self.point_errors().mean()) if self.correspondences else None,
             **meta,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PitchCalibration":
+        return cls(np.array(data["homography"]), tuple(data["image_size"]),
+                   Pitch(**data.get("pitch", {})), data.get("correspondences", []))
+
+    def save(self, path: str | Path, **meta) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_text(json.dumps(data, indent=2))
+        Path(path).write_text(json.dumps(self.to_dict(**meta), indent=2))
 
     @classmethod
     def load(cls, path: str | Path) -> "PitchCalibration":
-        data = json.loads(Path(path).read_text())
-        return cls(np.array(data["homography"]), tuple(data["image_size"]),
-                   Pitch(**data.get("pitch", {})), data.get("correspondences", []))
+        return cls.from_dict(json.loads(Path(path).read_text()))

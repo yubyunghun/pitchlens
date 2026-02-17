@@ -2,6 +2,8 @@
 
 Usage:
     pitchlens-calibrate --video data/raw/match.mp4 --frame 0
+    pitchlens-calibrate --video data/raw/match.mp4 --time 1:23   # adds another keyframe
+    pitchlens-calibrate --list
 
 Two windows open:
   * "frame": the video frame
@@ -24,6 +26,7 @@ import cv2
 import numpy as np
 
 from pitchlens.calibration.homography import PitchCalibration
+from pitchlens.calibration.keyframes import CalibrationSet
 from pitchlens.calibration.pitch import Pitch
 from pitchlens.visualization.minimap import Minimap, draw_projected_pitch
 
@@ -168,30 +171,78 @@ class CalibrationTool:
             cv2.destroyAllWindows()
 
 
+def parse_time(text: str) -> float:
+    """'83', '83.5', '1:23' or '0:01:23' -> seconds."""
+    seconds = 0.0
+    for part in text.split(":"):
+        seconds = seconds * 60 + float(part)
+    return seconds
+
+
+def video_fps(video: str) -> float:
+    cap = cv2.VideoCapture(video)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+    if not fps or fps <= 0:
+        raise SystemExit(f"Could not read the frame rate of {video}")
+    return fps
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Calibrate the camera view to the pitch")
+    parser = argparse.ArgumentParser(
+        description="Calibrate the camera view to the pitch. Each run adds one keyframe to the output "
+                    "file; calibrate the start of the clip and the first frame after each camera cut.")
     parser.add_argument("--video", default="data/raw/match.mp4")
-    parser.add_argument("--frame", type=int, default=0, help="frame index to calibrate on")
+    where = parser.add_mutually_exclusive_group()
+    where.add_argument("--frame", type=int, help="frame index to calibrate on (default 0)")
+    where.add_argument("--time", help="timestamp to calibrate on, e.g. 83.5 or 1:23")
     parser.add_argument("--output", default="configs/calibration.json")
     parser.add_argument("--length", type=float, default=105.0, help="pitch length (m)")
     parser.add_argument("--width", type=float, default=68.0, help="pitch width (m)")
+    parser.add_argument("--list", action="store_true", help="list saved keyframes and exit")
+    parser.add_argument("--remove", type=int, metavar="FRAME", help="remove a saved keyframe and exit")
     args = parser.parse_args()
 
-    tool = CalibrationTool(read_frame(args.video, args.frame), Pitch(args.length, args.width))
+    out = Path(args.output)
+    calib_set = CalibrationSet.load(out) if out.exists() else CalibrationSet(video=args.video)
+
+    if args.list or args.remove is not None:
+        if args.remove is not None:
+            calib_set.remove(args.remove)
+            calib_set.save(out)
+            print(f"Removed keyframe {args.remove}")
+        for f, c in calib_set.keyframes.items():
+            errs = c.point_errors()
+            err = f"mean error {errs.mean():.2f} m" if len(errs) else ""
+            print(f"  frame {f:>6}: {len(c.correspondences)} landmarks {err}")
+        if not len(calib_set):
+            print("No keyframes saved")
+        return
+
+    frame_idx = args.frame or 0
+    if args.time is not None:
+        frame_idx = int(round(parse_time(args.time) * video_fps(args.video)))
+
+    tool = CalibrationTool(read_frame(args.video, frame_idx), Pitch(args.length, args.width))
     calib = tool.run()
     if calib is None:
         print("Calibration not saved")
         return
-    calib.save(args.output, video=args.video, frame=args.frame)
+    replaced = frame_idx in calib_set.keyframes
+    calib_set.video = args.video
+    calib_set.add(frame_idx, calib)
+    calib_set.save(out)
+
     errs = calib.point_errors()
-    print(f"Saved {args.output}: {len(errs)} landmarks, mean error {errs.mean():.2f} m, max {errs.max():.2f} m")
+    print(f"{'Updated' if replaced else 'Added'} keyframe {frame_idx} in {out} "
+          f"({len(calib_set)} keyframes): {len(errs)} landmarks, "
+          f"mean error {errs.mean():.2f} m, max {errs.max():.2f} m")
     if errs.max() > 1.5:
         worst = calib.correspondences[int(errs.argmax())]["name"]
         print(f"Warning: '{worst}' is {errs.max():.1f} m off; it may have been clicked on the wrong landmark")
-    preview = draw_projected_pitch(tool.frame.copy(), calib)
-    out = Path(args.output).with_suffix(".png")
-    cv2.imwrite(str(out), preview)
-    print(f"Preview with projected pitch lines: {out}")
+    preview = out.with_name(f"{out.stem}_frame{frame_idx}.png")
+    cv2.imwrite(str(preview), draw_projected_pitch(tool.frame.copy(), calib))
+    print(f"Preview with projected pitch lines: {preview}")
 
 
 if __name__ == "__main__":

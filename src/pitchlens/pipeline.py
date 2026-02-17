@@ -13,6 +13,7 @@ import yaml
 from tqdm import tqdm
 
 from pitchlens.calibration.homography import PitchCalibration
+from pitchlens.calibration.keyframes import CalibrationSet
 from pitchlens.detection.classes import CLASS_NAMES, REFEREE
 from pitchlens.detection.detector import Detector
 from pitchlens.tracking.team_assigner import UNKNOWN, TeamAssigner
@@ -45,7 +46,12 @@ def load_calibration(config: dict, info: sv.VideoInfo) -> PitchCalibration | Non
         print("No calibration file found; skipping minimap and pitch coordinates "
               "(run pitchlens-calibrate to create one)")
         return None
-    return PitchCalibration.load(path).for_image_size(info.width, info.height)
+    calib_set = CalibrationSet.load(path)
+    if not len(calib_set):
+        print(f"{path} has no keyframes; skipping minimap and pitch coordinates")
+        return None
+    # Static camera for now: the first keyframe is used for every frame.
+    return calib_set.keyframes[calib_set.frames[0]].for_image_size(info.width, info.height)
 
 
 def run(config: dict) -> None:
