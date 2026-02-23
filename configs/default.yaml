@@ -6,8 +6,11 @@ detection:
   confidence: 0.3          # players / referees
   ball_confidence: 0.15    # ball is small, so allow lower confidence
   device: null             # null = auto, or "cpu", "0" for first GPU
+camera_motion:
+  enabled: true          # follow camera pans/zooms; false = static camera
+  max_gap: 10            # failed motion estimates in a row before the chain breaks
 calibration:
-  path: configs/calibration.json   # created by pitchlens-calibrate; skipped if missing
+  path: configs/calibration.json   # keyframes from pitchlens-calibrate; skipped if missing
 minimap:
   enabled: true
   width_fraction: 0.3      # minimap width as a fraction of the video width

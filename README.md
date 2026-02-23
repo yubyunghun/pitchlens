@@ -40,11 +40,22 @@ Two windows open. Click a landmark on the video frame (a box corner, the halfway
 the touchline, the center spot, ...), then click the same landmark on the pitch diagram.
 Repeat for **4+ landmarks spread across the visible pitch**. From 4 pairs the pitch lines are
 drawn over the frame in yellow: if they sit on the real lines, the calibration is good.
-Each landmark shows its error in meters; `u` undoes a bad click. Press `s` to save
-`configs/calibration.json` (plus a `.png` preview).
+Each landmark shows its error in meters; `u` undoes a bad click. Press `s` to save it as a
+keyframe in `configs/calibration.json` (plus a `.png` preview).
 
-> The calibration is valid while the camera stays still. A panning broadcast camera needs
-> per-frame calibration, which is on the roadmap.
+### Moving cameras and keyframes
+You don't need to calibrate every frame. The pipeline measures how the camera pans and zooms
+between frames and carries the calibration along, forward and backward from each keyframe.
+Each run of `pitchlens-calibrate` adds one more keyframe:
+```bash
+pitchlens-calibrate --time 0:00      # start of the clip
+pitchlens-calibrate --time 0:42      # first frame after a camera cut
+pitchlens-calibrate --list           # saved keyframes
+pitchlens-calibrate --remove 1050    # drop one
+```
+Calibrate one frame per camera shot; extra keyframes in long shots reduce drift further.
+Frames that can't be linked to any keyframe (e.g. a shot you didn't calibrate) are left
+without pitch coordinates rather than given wrong ones.
 
 ## Run player tracking
 Put a clip at `data/raw/match.mp4`, then:
@@ -52,4 +63,6 @@ Put a clip at `data/raw/match.mp4`, then:
 pitchlens-track                                   # uses configs/default.yaml
 pitchlens-track --input data/raw/clip.mp4 --output outputs/clip.mp4
 ```
-Output: each player gets an ellipse in their team's color and a tracking ID; referees show as `REF` and the ball gets a triangle marker. With a calibration file, a top-down minimap is added and `outputs/tracks.csv` gets every player's position in meters per frame.
+Output: each player gets an ellipse in their team's color and a tracking ID; referees show as `REF` and the ball gets a triangle marker. With a calibration file, a top-down minimap is added and `outputs/tracks.csv` gets every player's position in meters per frame (`calib_distance` = frames since the nearest keyframe; lower is more accurate).
+
+The video is read twice: first for detection, tracking and camera motion, then to draw the output with each frame's calibration.
