@@ -44,10 +44,22 @@ def _boxes(t):
     return np.array(out)
 
 
+CLOSE_UP_FRAMES: range = range(0)   # frames replaced by a close-up shot (no pitch visible)
+
+
+def _close_up():
+    frame = np.full((SIZE[1], SIZE[0], 3), (70, 60, 80), np.uint8)
+    cv2.rectangle(frame, (300, 50), (650, 540), (0, 0, 200), -1)      # one player filling the shot
+    return frame
+
+
 def _make_video(path):
     world = _pitch_texture(5)
     writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 25, SIZE)
     for t in range(N_FRAMES):
+        if t in CLOSE_UP_FRAMES:
+            writer.write(_close_up())
+            continue
         frame = _view(world, _cam(t))
         for (color, _), (x1, y1, x2, y2) in zip(_truth(t), _boxes(t)):
             cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, -1)
@@ -69,7 +81,8 @@ class FakeDetector:
         return SimpleNamespace(players=players, ball=sv.Detections.empty())
 
 
-def _run(tmp_path, track_camera):
+def _run(tmp_path, track_camera, key_frames=(0,)):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     video = tmp_path / "clip.avi"
     _make_video(video)
     assigner = TeamAssigner()
@@ -79,7 +92,7 @@ def _run(tmp_path, track_camera):
     assigner.fit()
 
     records = analyze(str(video), FakeDetector(), assigner, fps=25, track_camera=track_camera)
-    keys = CalibrationSet({0: _calib_for(_cam(0))})
+    keys = CalibrationSet({k: _calib_for(_cam(k)) for k in key_frames})
     calibs = solve(records, keys, SIZE, track_camera)
     info = sv.VideoInfo.from_video_path(str(video))
     out_csv = tmp_path / "tracks.csv"

@@ -54,6 +54,8 @@ pitchlens-calibrate --list           # saved keyframes
 pitchlens-calibrate --remove 1050    # drop one
 ```
 Calibrate one frame per camera shot; extra keyframes in long shots reduce drift further.
+Camera cuts (close-ups, replays, switching cameras) are detected automatically, and
+`pitchlens-track` prints their timestamps so you know which shots still need a keyframe.
 Frames that can't be linked to any keyframe (e.g. a shot you didn't calibrate) are left
 without pitch coordinates rather than given wrong ones.
 

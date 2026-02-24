@@ -25,6 +25,7 @@ from tqdm import tqdm
 from pitchlens.calibration.anchored import FrameCalibration, solve_calibrations
 from pitchlens.calibration.camera_motion import CameraMotionTracker
 from pitchlens.calibration.keyframes import CalibrationSet
+from pitchlens.calibration.shot_cuts import AppearanceChange, find_cuts
 from pitchlens.detection.classes import CLASS_NAMES, REFEREE
 from pitchlens.tracking.team_assigner import UNKNOWN, TeamAssigner
 from pitchlens.tracking.tracker import PlayerTracker
@@ -40,6 +41,7 @@ class FrameRecord:
     teams: np.ndarray            # team per player (UNKNOWN for referees)
     ball: sv.Detections
     motion: np.ndarray | None    # camera motion from the previous frame (None if unknown)
+    change: float = 0.0          # appearance change from the previous frame (0..1), for cut detection
 
 
 def foot_points(xyxy: np.ndarray) -> np.ndarray:
@@ -75,6 +77,7 @@ def analyze(video: str, detector, assigner: TeamAssigner, fps: float, track_came
     """Pass 1: detection, tracking, teams and camera motion for every frame."""
     tracker = PlayerTracker(fps=fps)
     camera = CameraMotionTracker() if track_camera else None
+    appearance = AppearanceChange()
     records = []
     for frame in tqdm(sv.get_video_frames_generator(video), total=total, desc="Analyzing"):
         dets = detector.detect(frame)
@@ -89,20 +92,27 @@ def analyze(video: str, detector, assigner: TeamAssigner, fps: float, track_came
             moving = np.vstack([dets.players.xyxy.reshape(-1, 4), dets.ball.xyxy.reshape(-1, 4)])
             result = camera.update(frame, moving)
             motion = result.H if result is not None else None
-        records.append(FrameRecord(players, teams, dets.ball, motion))
+        records.append(FrameRecord(players, teams, dets.ball, motion, appearance.update(frame)))
     return records
 
 
+def detect_cuts(records: list[FrameRecord]) -> list[int]:
+    return find_cuts([r.change for r in records], [r.motion is not None for r in records])
+
+
 def solve(records: list[FrameRecord], keyframes: CalibrationSet | None, image_size: tuple[int, int],
-          track_camera: bool = True, max_gap: int = 10) -> list[FrameCalibration | None]:
-    """Calibration for every frame (None where unknown)."""
+          track_camera: bool = True, max_gap: int = 10,
+          cuts: list[int] | None = None) -> list[FrameCalibration | None]:
+    """Calibration for every frame (None where unknown). Chains never cross `cuts`."""
     n = len(records)
     if keyframes is None:
         return [None] * n
     if not track_camera:  # static camera: the first keyframe applies everywhere
         first = keyframes.frames[0]
         return [FrameCalibration(keyframes.keyframes[first], first, abs(t - first)) for t in range(n)]
-    return solve_calibrations([r.motion for r in records], keyframes, image_size, max_gap=max_gap)
+    if cuts is None:
+        cuts = detect_cuts(records)
+    return solve_calibrations([r.motion for r in records], keyframes, image_size, breaks=cuts, max_gap=max_gap)
 
 
 def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
@@ -161,8 +171,14 @@ def run(config: dict) -> None:
     info = sv.VideoInfo.from_video_path(src)
     records = analyze(src, detector, assigner, info.fps, track_camera, info.total_frames)
 
+    cuts = detect_cuts(records) if track_camera else []
+    if cuts:
+        stamps = ", ".join(f"frame {c} ({c / info.fps:.1f}s)" for c in cuts[:10])
+        print(f"Detected {len(cuts)} camera cut(s): {stamps}{' ...' if len(cuts) > 10 else ''}")
+        print("  Calibrate one frame after each cut so that shot gets pitch coordinates too")
+
     keyframes = load_keyframes((config.get("calibration") or {}).get("path"), info)
-    calibs = solve(records, keyframes, (info.width, info.height), track_camera, cam_cfg.get("max_gap", 10))
+    calibs = solve(records, keyframes, (info.width, info.height), track_camera, cam_cfg.get("max_gap", 10), cuts)
     if keyframes is not None:
         covered = sum(c is not None for c in calibs)
         print(f"Calibrated {covered}/{len(calibs)} frames from {len(keyframes)} keyframe(s)")
