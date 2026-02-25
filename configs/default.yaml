@@ -14,5 +14,7 @@ calibration:
 minimap:
   enabled: true
   width_fraction: 0.3      # minimap width as a fraction of the video width
+debug:
+  pitch_overlay: false    # or pass --debug: draw calibrated pitch lines + check alignment
 export:
   tracks_csv: outputs/tracks.csv   # per-frame player positions (pixels + meters)

@@ -68,3 +68,12 @@ pitchlens-track --input data/raw/clip.mp4 --output outputs/clip.mp4
 Output: each player gets an ellipse in their team's color and a tracking ID; referees show as `REF` and the ball gets a triangle marker. With a calibration file, a top-down minimap is added and `outputs/tracks.csv` gets every player's position in meters per frame (`calib_distance` = frames since the nearest keyframe; lower is more accurate).
 
 The video is read twice: first for detection, tracking and camera motion, then to draw the output with each frame's calibration.
+
+### Checking the calibration
+```bash
+pitchlens-track --debug
+```
+Draws the calibrated pitch lines in yellow on every frame, with a status box showing which
+keyframe the frame is chained from and a **line match** score: the share of projected lines
+that land on real white lines in the video (green 70%+, yellow 50-70%, red below 50%).
+At the end it prints a summary with the worst frames, which are good places to add a keyframe.

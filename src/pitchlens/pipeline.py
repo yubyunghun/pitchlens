@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
 
+import cv2
 import numpy as np
 import supervision as sv
 import yaml
@@ -24,13 +25,14 @@ from tqdm import tqdm
 
 from pitchlens.calibration.anchored import FrameCalibration, solve_calibrations
 from pitchlens.calibration.camera_motion import CameraMotionTracker
+from pitchlens.calibration.drift import line_alignment
 from pitchlens.calibration.keyframes import CalibrationSet
 from pitchlens.calibration.shot_cuts import AppearanceChange, find_cuts
 from pitchlens.detection.classes import CLASS_NAMES, REFEREE
 from pitchlens.tracking.team_assigner import UNKNOWN, TeamAssigner
 from pitchlens.tracking.tracker import PlayerTracker
 from pitchlens.visualization.annotator import annotate, player_color
-from pitchlens.visualization.minimap import Minimap, paste_minimap
+from pitchlens.visualization.minimap import Minimap, draw_projected_pitch, paste_minimap
 
 CSV_HEADER = ["frame", "track_id", "class", "team", "x_px", "y_px", "x_m", "y_m", "calib_distance"]
 
@@ -115,10 +117,34 @@ def solve(records: list[FrameRecord], keyframes: CalibrationSet | None, image_si
     return solve_calibrations([r.motion for r in records], keyframes, image_size, breaks=cuts, max_gap=max_gap)
 
 
+def _draw_debug_hud(frame: np.ndarray, idx: int, fc: FrameCalibration | None, score: float | None,
+                    is_cut: bool) -> None:
+    lines = [(f"frame {idx}", (255, 255, 255))]
+    if fc is None:
+        lines.append(("calib: none (no keyframe in this shot)", (80, 80, 255)))
+    else:
+        lines.append((f"calib: keyframe {fc.keyframe} {fc.distance:+d}" if fc.distance
+                      else f"calib: keyframe {fc.keyframe} (exact)", (255, 255, 255)))
+        if score is not None:
+            color = (80, 220, 80) if score >= 0.7 else (0, 210, 255) if score >= 0.5 else (80, 80, 255)
+            lines.append((f"line match {score:.0%}", color))
+    if is_cut:
+        lines.append(("CAMERA CUT", (0, 210, 255)))
+    cv2.rectangle(frame, (8, 8), (330, 16 + 26 * len(lines)), (20, 20, 20), -1)
+    for i, (text, color) in enumerate(lines):
+        cv2.putText(frame, text, (16, 32 + 26 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1, cv2.LINE_AA)
+
+
 def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
            calibs: list[FrameCalibration | None], team_colors: dict, minimap: Minimap | None,
-           csv_path: str | None) -> None:
-    """Pass 2: draw overlays and minimap, write the video and the positions CSV."""
+           csv_path: str | None, debug: bool = False, cuts: list[int] = ()) -> list[float | None]:
+    """Pass 2: draw overlays and minimap, write the video and the positions CSV.
+
+    debug: draw the calibrated pitch lines and a status box on every frame, and
+    measure how well the lines match the video (returned per frame).
+    """
+    cut_set = set(cuts)
+    scores: list[float | None] = []
     Path(dst).parent.mkdir(parents=True, exist_ok=True)
     csv_file = writer = None
     if csv_path:
@@ -135,6 +161,13 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                 pitch_xy = fc.calib.to_pitch(feet) if fc else np.full_like(feet, np.nan)
 
                 out = annotate(frame, rec.players, rec.teams, team_colors, rec.ball)
+                score = None
+                if debug:
+                    if fc:
+                        score = line_alignment(frame, fc.calib)  # measured on the clean frame
+                        draw_projected_pitch(out, fc.calib, (0, 255, 255), 1)
+                    _draw_debug_hud(out, idx, fc, score, idx in cut_set)
+                scores.append(score)
                 if minimap and fc:
                     colors = [player_color(c, t, team_colors) for c, t in zip(rec.players.class_id, rec.teams)]
                     # the ball is sometimes in the air, so its ground position is only approximate
@@ -153,6 +186,21 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
     finally:
         if csv_file:
             csv_file.close()
+    return scores
+
+
+def summarize_alignment(scores: list[float | None], fps: float, threshold: float = 0.5) -> str:
+    measured = [(i, s) for i, s in enumerate(scores) if s is not None]
+    if not measured:
+        return "Line match: no frames could be checked (not enough pitch markings visible)"
+    vals = np.array([s for _, s in measured])
+    bad = [i for i, s in measured if s < threshold]
+    text = f"Line match: median {np.median(vals):.0%} over {len(measured)} checked frames"
+    if bad:
+        worst = min(measured, key=lambda m: m[1])
+        text += (f"; {len(bad)} frames below {threshold:.0%} (worst: frame {worst[0]}, "
+                 f"{worst[0] / fps:.1f}s, {worst[1]:.0%}). Adding a keyframe near there should help")
+    return text
 
 
 def run(config: dict) -> None:
@@ -193,8 +241,12 @@ def run(config: dict) -> None:
         minimap = Minimap(pitch, width_px=int(info.width * mm_cfg.get("width_fraction", 0.3)))
 
     csv_path = (config.get("export") or {}).get("tracks_csv")
-    render(src, dst, info, records, calibs, assigner.team_colors_bgr, minimap, csv_path)
+    debug = bool((config.get("debug") or {}).get("pitch_overlay", False))
+    scores = render(src, dst, info, records, calibs, assigner.team_colors_bgr, minimap, csv_path,
+                    debug=debug, cuts=cuts)
     print(f"Saved {dst}" + (f" and {csv_path}" if csv_path else ""))
+    if debug and keyframes is not None:
+        print(summarize_alignment(scores, info.fps))
 
 
 def main() -> None:
@@ -203,6 +255,8 @@ def main() -> None:
     parser.add_argument("--input", help="override input video path")
     parser.add_argument("--output", help="override output video path")
     parser.add_argument("--calibration", help="override calibration JSON path")
+    parser.add_argument("--debug", action="store_true",
+                        help="draw calibrated pitch lines + status on every frame and check line alignment")
     args = parser.parse_args()
 
     config = yaml.safe_load(Path(args.config).read_text())
@@ -212,6 +266,8 @@ def main() -> None:
         config["video"]["output"] = args.output
     if args.calibration:
         config.setdefault("calibration", {})["path"] = args.calibration
+    if args.debug:
+        config.setdefault("debug", {})["pitch_overlay"] = True
     run(config)
 
 

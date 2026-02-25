@@ -135,3 +135,20 @@ def test_static_mode_drifts_when_camera_pans(tmp_path):
     _, rows = _run(tmp_path, track_camera=False)
     errs = _position_errors(rows)
     assert errs.max() > 5.0          # without camera tracking positions end up meters off
+
+
+def test_debug_render_reports_a_score_per_frame(tmp_path):
+    video = tmp_path / "clip.avi"
+    _make_video(video)
+    assigner = TeamAssigner()
+    first = next(sv.get_video_frames_generator(str(video)))
+    assigner.collect(first, _boxes(0))
+    assigner.collect(first, _boxes(0))
+    assigner.fit()
+    records = analyze(str(video), FakeDetector(), assigner, fps=25)
+    calibs = solve(records, CalibrationSet({0: _calib_for(_cam(0))}), SIZE)
+    info = sv.VideoInfo.from_video_path(str(video))
+    scores = render(str(video), str(tmp_path / "debug.mp4"), info, records, calibs,
+                    assigner.team_colors_bgr, None, None, debug=True, cuts=[5])
+    assert len(scores) == N_FRAMES
+    assert (tmp_path / "debug.mp4").stat().st_size > 0
