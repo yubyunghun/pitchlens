@@ -65,6 +65,20 @@ class Minimap:
         return img
 
 
+def draw_attack_arrows(img: np.ndarray, minimap: Minimap,
+                       arrows: list[tuple[tuple[int, int, int], int]]) -> np.ndarray:
+    """Arrows in the top margin of a rendered minimap: (team color, +1 = attacks right / -1 = left)."""
+    y = max(4, int(round(minimap.margin * minimap.scale / 2)))
+    half = 4.0  # arrow half-length in meters
+    for i, (color, direction) in enumerate(arrows):
+        cx = minimap.pitch.length * (0.3 + 0.4 * i)        # first team left of center, second right
+        x1, _ = minimap.to_px((cx - half * direction, 0))
+        x2, _ = minimap.to_px((cx + half * direction, 0))
+        cv2.arrowedLine(img, (int(x1), y), (int(x2), y), (20, 20, 20), 4, cv2.LINE_AA, tipLength=0.35)
+        cv2.arrowedLine(img, (int(x1), y), (int(x2), y), color, 2, cv2.LINE_AA, tipLength=0.35)
+    return img
+
+
 def paste_minimap(frame: np.ndarray, minimap: np.ndarray, pad: int = 16) -> np.ndarray:
     """Places the minimap (with a thin border) at the bottom-center of the frame."""
     h, w = minimap.shape[:2]

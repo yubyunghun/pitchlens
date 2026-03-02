@@ -152,3 +152,27 @@ def test_debug_render_reports_a_score_per_frame(tmp_path):
                     assigner.team_colors_bgr, None, None, debug=True, cuts=[5])
     assert len(scores) == N_FRAMES
     assert (tmp_path / "debug.mp4").stat().st_size > 0
+
+
+def test_team_positions_feed_direction_and_render(tmp_path):
+    from pitchlens.offside.direction import infer_attack_directions
+    from pitchlens.pipeline import team_positions
+    video = tmp_path / "clip.avi"
+    _make_video(video)
+    assigner = TeamAssigner()
+    first = next(sv.get_video_frames_generator(str(video)))
+    assigner.collect(first, _boxes(0))
+    assigner.collect(first, _boxes(0))
+    assigner.fit()
+    records = analyze(str(video), FakeDetector(), assigner, fps=25)
+    calibs = solve(records, CalibrationSet({0: _calib_for(_cam(0))}), SIZE)
+    frames = team_positions(records, calibs)
+    assert len(frames) >= N_FRAMES - 2
+    assert all(len(xy) == len(teams) and np.isfinite(xy).all() for xy, teams in frames)
+    # red players start further left than blue, so red should be the team defending the left goal
+    est = infer_attack_directions(frames)
+    red_team = assigner.assign(first, _boxes(0)[:1], np.array([999]))[0]
+    assert est.directions[red_team] == 1
+    info = sv.VideoInfo.from_video_path(str(video))
+    render(str(video), str(tmp_path / "out.mp4"), info, records, calibs, assigner.team_colors_bgr,
+           Minimap(Pitch(), width_px=288), None, directions=est)

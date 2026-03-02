@@ -91,3 +91,24 @@ def test_reads_tracks_csv(tmp_path):
     assert len(frames) == 3 and len(frames[0][0]) == 11
     assert infer_attack_directions(frames).directions[TEAM_A] == ATTACKS_RIGHT
 
+
+def test_minimap_arrows_point_the_right_way():
+    from pitchlens.calibration.pitch import Pitch
+    from pitchlens.visualization.minimap import Minimap, draw_attack_arrows
+    mm = Minimap(Pitch(), width_px=555, margin_m=3.0)
+    red, blue = (0, 0, 255), (255, 0, 0)
+    img = draw_attack_arrows(mm.render(np.empty((0, 2)), []), mm, [(red, ATTACKS_RIGHT), (blue, ATTACKS_LEFT)])
+    top = img[: int(mm.margin * mm.scale)]
+
+    def tip_x(color):   # arrow tip is the far end of the colored pixels in the arrow's direction
+        xs = np.where((top == color).all(axis=2))[1]
+        return xs.min(), xs.max()
+
+    r_min, r_max = tip_x(red)
+    b_min, b_max = tip_x(blue)
+    assert r_max < b_min                         # red arrow on the left, blue on the right
+    # the arrowhead is wider than the shaft, so most colored pixels sit near the tip
+    red_cols = np.where((top == red).all(axis=2))[1]
+    blue_cols = np.where((top == blue).all(axis=2))[1]
+    assert np.median(red_cols) > (r_min + r_max) / 2     # red points right
+    assert np.median(blue_cols) < (b_min + b_max) / 2    # blue points left

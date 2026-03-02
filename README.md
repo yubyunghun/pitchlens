@@ -69,6 +69,9 @@ Output: each player gets an ellipse in their team's color and a tracking ID; ref
 
 The video is read twice: first for detection, tracking and camera motion, then to draw the output with each frame's calibration.
 
+It also works out which goal each team attacks (from team shape and each team's deepest
+players) and prints it with each team's shirt color; the minimap shows it as an arrow per team.
+
 ### Checking the calibration
 ```bash
 pitchlens-track --debug

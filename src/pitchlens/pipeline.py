@@ -29,10 +29,11 @@ from pitchlens.calibration.drift import line_alignment
 from pitchlens.calibration.keyframes import CalibrationSet
 from pitchlens.calibration.shot_cuts import AppearanceChange, find_cuts
 from pitchlens.detection.classes import CLASS_NAMES, REFEREE
+from pitchlens.offside.direction import DirectionEstimate, infer_attack_directions
 from pitchlens.tracking.team_assigner import UNKNOWN, TeamAssigner
 from pitchlens.tracking.tracker import PlayerTracker
 from pitchlens.visualization.annotator import annotate, player_color
-from pitchlens.visualization.minimap import Minimap, draw_projected_pitch, paste_minimap
+from pitchlens.visualization.minimap import Minimap, draw_attack_arrows, draw_projected_pitch, paste_minimap
 
 CSV_HEADER = ["frame", "track_id", "class", "team", "x_px", "y_px", "x_m", "y_m", "calib_distance"]
 
@@ -117,6 +118,20 @@ def solve(records: list[FrameRecord], keyframes: CalibrationSet | None, image_si
     return solve_calibrations([r.motion for r in records], keyframes, image_size, breaks=cuts, max_gap=max_gap)
 
 
+def team_positions(records: list[FrameRecord],
+                   calibs: list[FrameCalibration | None]) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Per calibrated frame: (pitch positions of all tracked players, their team ids)."""
+    out = []
+    for rec, fc in zip(records, calibs):
+        if fc is not None and len(rec.players):
+            out.append((fc.calib.to_pitch(foot_points(rec.players.xyxy)), rec.teams))
+    return out
+
+
+def _hex(bgr: tuple[int, int, int]) -> str:
+    return "#{2:02x}{1:02x}{0:02x}".format(*bgr)
+
+
 def _draw_debug_hud(frame: np.ndarray, idx: int, fc: FrameCalibration | None, score: float | None,
                     is_cut: bool) -> None:
     lines = [(f"frame {idx}", (255, 255, 255))]
@@ -137,13 +152,17 @@ def _draw_debug_hud(frame: np.ndarray, idx: int, fc: FrameCalibration | None, sc
 
 def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
            calibs: list[FrameCalibration | None], team_colors: dict, minimap: Minimap | None,
-           csv_path: str | None, debug: bool = False, cuts: list[int] = ()) -> list[float | None]:
+           csv_path: str | None, debug: bool = False, cuts: list[int] = (),
+           directions: DirectionEstimate | None = None) -> list[float | None]:
     """Pass 2: draw overlays and minimap, write the video and the positions CSV.
 
-    debug: draw the calibrated pitch lines and a status box on every frame, and
-    measure how well the lines match the video (returned per frame).
+    debug:      draw the calibrated pitch lines and a status box on every frame, and
+                measure how well the lines match the video (returned per frame).
+    directions: if known, the minimap shows which way each team attacks.
     """
     cut_set = set(cuts)
+    arrows = [] if directions is None else [
+        (team_colors.get(t, (200, 200, 200)), directions.directions[t]) for t in sorted(directions.directions)]
     scores: list[float | None] = []
     Path(dst).parent.mkdir(parents=True, exist_ok=True)
     csv_file = writer = None
@@ -172,7 +191,10 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                     colors = [player_color(c, t, team_colors) for c, t in zip(rec.players.class_id, rec.teams)]
                     # the ball is sometimes in the air, so its ground position is only approximate
                     ball_xy = fc.calib.to_pitch(foot_points(rec.ball.xyxy))[0] if len(rec.ball) else None
-                    paste_minimap(out, minimap.render(pitch_xy, colors, ball=ball_xy))
+                    mini = minimap.render(pitch_xy, colors, ball=ball_xy)
+                    if arrows:
+                        draw_attack_arrows(mini, minimap, arrows)
+                    paste_minimap(out, mini)
                 sink.write_frame(out)
 
                 if writer:
@@ -234,6 +256,17 @@ def run(config: dict) -> None:
             print("  Frames without calibration are cut off from every keyframe (camera cut or lost "
                   "tracking); add a keyframe there with pitchlens-calibrate --frame N")
 
+    directions = infer_attack_directions(team_positions(records, calibs)) if keyframes is not None else None
+    if directions is not None:
+        print(f"Attacking directions ({directions.confidence:.0%} confidence, {directions.frames_used} frames):")
+        for team in sorted(directions.directions):
+            color = _hex(assigner.team_colors_bgr.get(team, (200, 200, 200)))
+            print(f"  team {team} (shirt color {color}) attacks {directions.describe(team)}")
+        if directions.confidence < 0.7:
+            print("  Low confidence: the clip may cover half-time, or the team colors may be mixed up")
+    elif keyframes is not None:
+        print("Attacking directions: not enough calibrated frames with players from both teams")
+
     mm_cfg = config.get("minimap") or {}
     minimap = None
     if keyframes is not None and mm_cfg.get("enabled", True):
@@ -243,7 +276,7 @@ def run(config: dict) -> None:
     csv_path = (config.get("export") or {}).get("tracks_csv")
     debug = bool((config.get("debug") or {}).get("pitch_overlay", False))
     scores = render(src, dst, info, records, calibs, assigner.team_colors_bgr, minimap, csv_path,
-                    debug=debug, cuts=cuts)
+                    debug=debug, cuts=cuts, directions=directions)
     print(f"Saved {dst}" + (f" and {csv_path}" if csv_path else ""))
     if debug and keyframes is not None:
         print(summarize_alignment(scores, info.fps))
