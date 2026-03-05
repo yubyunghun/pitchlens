@@ -72,6 +72,10 @@ The video is read twice: first for detection, tracking and camera motion, then t
 It also works out which goal each team attacks (from team shape and each team's deepest
 players) and prints it with each team's shirt color; the minimap shows it as an arrow per team.
 
+The minimap also draws each team's **offside line** in its color: the second-last defender,
+or the ball if that is nearer the goal, never past halfway (Law 11). When the goal area is
+off-screen and no keeper is seen, the keeper is assumed to be there and the line is dashed.
+
 ### Checking the calibration
 ```bash
 pitchlens-track --debug

@@ -79,6 +79,24 @@ def draw_attack_arrows(img: np.ndarray, minimap: Minimap,
     return img
 
 
+def draw_offside_lines(img: np.ndarray, minimap: Minimap,
+                       lines: list[tuple[float, tuple[int, int, int], bool]]) -> np.ndarray:
+    """Vertical offside lines across the pitch: (pitch x, defending team color, dashed).
+
+    Dashed means less certain (the goalkeeper was out of view and assumed).
+    """
+    thick = max(2, int(round(minimap.scale * 0.35)))
+    for x, color, dashed in lines:
+        (px, y_top), (_, y_bot) = minimap.to_px((x, 0)), minimap.to_px((x, minimap.pitch.width))
+        if not dashed:
+            cv2.line(img, (int(px), int(y_top)), (int(px), int(y_bot)), color, thick, cv2.LINE_AA)
+            continue
+        dash = max(4, int(round(minimap.scale * 2)))
+        for y in range(int(y_top), int(y_bot), 2 * dash):
+            cv2.line(img, (int(px), y), (int(px), min(y + dash, int(y_bot))), color, thick, cv2.LINE_AA)
+    return img
+
+
 def paste_minimap(frame: np.ndarray, minimap: np.ndarray, pad: int = 16) -> np.ndarray:
     """Places the minimap (with a thin border) at the bottom-center of the frame."""
     h, w = minimap.shape[:2]

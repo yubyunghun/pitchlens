@@ -30,10 +30,12 @@ from pitchlens.calibration.keyframes import CalibrationSet
 from pitchlens.calibration.shot_cuts import AppearanceChange, find_cuts
 from pitchlens.detection.classes import CLASS_NAMES, REFEREE
 from pitchlens.offside.direction import DirectionEstimate, infer_attack_directions
+from pitchlens.offside.line import frame_offside_lines
 from pitchlens.tracking.team_assigner import UNKNOWN, TeamAssigner
 from pitchlens.tracking.tracker import PlayerTracker
 from pitchlens.visualization.annotator import annotate, player_color
-from pitchlens.visualization.minimap import Minimap, draw_attack_arrows, draw_projected_pitch, paste_minimap
+from pitchlens.visualization.minimap import (Minimap, draw_attack_arrows, draw_offside_lines,
+                                             draw_projected_pitch, paste_minimap)
 
 CSV_HEADER = ["frame", "track_id", "class", "team", "x_px", "y_px", "x_m", "y_m", "calib_distance"]
 
@@ -192,6 +194,11 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                     # the ball is sometimes in the air, so its ground position is only approximate
                     ball_xy = fc.calib.to_pitch(foot_points(rec.ball.xyxy))[0] if len(rec.ball) else None
                     mini = minimap.render(pitch_xy, colors, ball=ball_xy)
+                    if directions is not None:
+                        lines = frame_offside_lines(pitch_xy, rec.teams, directions, fc.calib, ball_xy,
+                                                    rec.players.class_id)
+                        draw_offside_lines(mini, minimap, [(ln.x, team_colors.get(t, (200, 200, 200)),
+                                                            ln.keeper_assumed) for t, ln in lines.items()])
                     if arrows:
                         draw_attack_arrows(mini, minimap, arrows)
                     paste_minimap(out, mini)

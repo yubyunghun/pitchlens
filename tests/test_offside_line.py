@@ -118,3 +118,20 @@ def test_frame_lines_for_both_teams():
     # but that's beyond halfway from B's goal, so the halfway line applies
     assert lines[TEAM_B].keeper_assumed and lines[TEAM_B].source == HALFWAY
 
+
+def test_minimap_draws_solid_and_dashed_lines():
+    from pitchlens.calibration.pitch import Pitch
+    from pitchlens.visualization.minimap import Minimap, draw_offside_lines
+    mm = Minimap(Pitch(), width_px=555, margin_m=3.0)
+    red, blue = (0, 0, 255), (255, 0, 0)
+    img = draw_offside_lines(mm.render(np.empty((0, 2)), []), mm, [(20.0, red, False), (80.0, blue, True)])
+    col_r, col_b = mm.to_px((20.0, 0))[0], mm.to_px((80.0, 0))[0]
+    y_top, y_bot = mm.to_px((0, 0))[1], mm.to_px((0, 68))[1]
+    def coverage(col, color):   # share of rows with a pixel close to the color (lines are anti-aliased)
+        strip = img[y_top:y_bot, col - 1:col + 2].astype(int)
+        near = np.linalg.norm(strip - np.array(color), axis=2) < 150
+        return near.any(axis=1).mean()
+
+    red_rows, blue_rows = coverage(col_r, red), coverage(col_b, blue)
+    assert red_rows > 0.95              # solid across the whole width
+    assert 0.3 < blue_rows < 0.7        # dashed: roughly half
