@@ -30,12 +30,13 @@ from pitchlens.calibration.keyframes import CalibrationSet
 from pitchlens.calibration.shot_cuts import AppearanceChange, find_cuts
 from pitchlens.detection.classes import CLASS_NAMES, REFEREE
 from pitchlens.offside.direction import DirectionEstimate, infer_attack_directions
-from pitchlens.offside.line import frame_offside_lines
+from pitchlens.offside.line import active_defending_team, frame_offside_lines
 from pitchlens.tracking.team_assigner import UNKNOWN, TeamAssigner
 from pitchlens.tracking.tracker import PlayerTracker
 from pitchlens.visualization.annotator import annotate, player_color
 from pitchlens.visualization.minimap import (Minimap, draw_attack_arrows, draw_offside_lines,
                                              draw_projected_pitch, paste_minimap)
+from pitchlens.visualization.offside_overlay import draw_offside_overlay
 
 CSV_HEADER = ["frame", "track_id", "class", "team", "x_px", "y_px", "x_m", "y_m", "calib_distance"]
 
@@ -155,12 +156,14 @@ def _draw_debug_hud(frame: np.ndarray, idx: int, fc: FrameCalibration | None, sc
 def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
            calibs: list[FrameCalibration | None], team_colors: dict, minimap: Minimap | None,
            csv_path: str | None, debug: bool = False, cuts: list[int] = (),
-           directions: DirectionEstimate | None = None) -> list[float | None]:
+           directions: DirectionEstimate | None = None, offside_in_video: bool = True) -> list[float | None]:
     """Pass 2: draw overlays and minimap, write the video and the positions CSV.
 
-    debug:      draw the calibrated pitch lines and a status box on every frame, and
-                measure how well the lines match the video (returned per frame).
-    directions: if known, the minimap shows which way each team attacks.
+    debug:            draw the calibrated pitch lines and a status box on every frame, and
+                      measure how well the lines match the video (returned per frame).
+    directions:       if known, the minimap shows attack directions and offside lines.
+    offside_in_video: also draw the offside line of the team defending near the ball
+                      into the video, VAR-style.
     """
     cut_set = set(cuts)
     arrows = [] if directions is None else [
@@ -180,8 +183,22 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                                                        desc="Rendering")):
                 feet = foot_points(rec.players.xyxy)
                 pitch_xy = fc.calib.to_pitch(feet) if fc else np.full_like(feet, np.nan)
+                # the ball is sometimes in the air, so its ground position is only approximate
+                ball_xy = fc.calib.to_pitch(foot_points(rec.ball.xyxy))[0] if fc and len(rec.ball) else None
+                lines = {}
+                if fc and directions is not None:
+                    lines = frame_offside_lines(pitch_xy, rec.teams, directions, fc.calib, ball_xy,
+                                                rec.players.class_id)
 
-                out = annotate(frame, rec.players, rec.teams, team_colors, rec.ball)
+                base = frame
+                active = active_defending_team(lines, ball_xy, pitch_xy) if offside_in_video else None
+                if active is not None:  # drawn first so players and their markers stay on top
+                    ln = lines[active]
+                    base = draw_offside_overlay(
+                        frame.copy(), fc.calib, ln, team_colors.get(active, (200, 200, 200)),
+                        occluders=rec.players.xyxy,
+                        defender_foot=None if ln.defender_index is None else feet[ln.defender_index])
+                out = annotate(base, rec.players, rec.teams, team_colors, rec.ball)
                 score = None
                 if debug:
                     if fc:
@@ -191,12 +208,8 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                 scores.append(score)
                 if minimap and fc:
                     colors = [player_color(c, t, team_colors) for c, t in zip(rec.players.class_id, rec.teams)]
-                    # the ball is sometimes in the air, so its ground position is only approximate
-                    ball_xy = fc.calib.to_pitch(foot_points(rec.ball.xyxy))[0] if len(rec.ball) else None
                     mini = minimap.render(pitch_xy, colors, ball=ball_xy)
-                    if directions is not None:
-                        lines = frame_offside_lines(pitch_xy, rec.teams, directions, fc.calib, ball_xy,
-                                                    rec.players.class_id)
+                    if lines:
                         draw_offside_lines(mini, minimap, [(ln.x, team_colors.get(t, (200, 200, 200)),
                                                             ln.keeper_assumed) for t, ln in lines.items()])
                     if arrows:
@@ -282,8 +295,9 @@ def run(config: dict) -> None:
 
     csv_path = (config.get("export") or {}).get("tracks_csv")
     debug = bool((config.get("debug") or {}).get("pitch_overlay", False))
+    offside_in_video = bool((config.get("offside") or {}).get("draw_in_video", True))
     scores = render(src, dst, info, records, calibs, assigner.team_colors_bgr, minimap, csv_path,
-                    debug=debug, cuts=cuts, directions=directions)
+                    debug=debug, cuts=cuts, directions=directions, offside_in_video=offside_in_video)
     print(f"Saved {dst}" + (f" and {csv_path}" if csv_path else ""))
     if debug and keyframes is not None:
         print(summarize_alignment(scores, info.fps))

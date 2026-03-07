@@ -14,6 +14,8 @@ calibration:
 minimap:
   enabled: true
   width_fraction: 0.3      # minimap width as a fraction of the video width
+offside:
+  draw_in_video: true     # VAR-style line of the team defending near the ball
 debug:
   pitch_overlay: false    # or pass --debug: draw calibrated pitch lines + check alignment
 export:

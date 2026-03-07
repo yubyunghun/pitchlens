@@ -101,6 +101,21 @@ def goal_area_in_view(calib: PitchCalibration, left_goal: bool, margin_px: float
                 and (img[:, 1] >= -margin_px).all() and (img[:, 1] <= h + margin_px).all())
 
 
+def active_defending_team(lines: dict[int, OffsideLine], ball: np.ndarray | None,
+                          positions: np.ndarray) -> int | None:
+    """The team defending the goal nearest the play (the ball, or else the players' median x)."""
+    if not lines:
+        return None
+    ref = None
+    if ball is not None and np.isfinite(ball).all():
+        ref = float(ball[0])
+    elif len(positions) and np.isfinite(positions[:, 0]).any():
+        ref = float(np.nanmedian(positions[:, 0]))
+    if ref is None:
+        return None
+    return min(lines, key=lambda t: lines[t].depth_of(ref))
+
+
 def frame_offside_lines(positions: np.ndarray, teams: np.ndarray, directions: DirectionEstimate,
                         calib: PitchCalibration, ball: np.ndarray | None = None,
                         classes: np.ndarray | None = None) -> dict[int, OffsideLine]:

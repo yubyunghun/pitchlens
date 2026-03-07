@@ -76,6 +76,10 @@ The minimap also draws each team's **offside line** in its color: the second-las
 or the ball if that is nearer the goal, never past halfway (Law 11). When the goal area is
 off-screen and no keeper is seen, the keeper is assumed to be there and the line is dashed.
 
+In the video itself, the offside line of the team defending near the ball is drawn VAR-style:
+a line across the pitch in perspective, behind the players, with a ring on the defender who
+sets it. Turn it off with `offside: draw_in_video: false` in the config.
+
 ### Checking the calibration
 ```bash
 pitchlens-track --debug
