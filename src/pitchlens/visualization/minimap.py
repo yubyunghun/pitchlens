@@ -97,6 +97,16 @@ def draw_offside_lines(img: np.ndarray, minimap: Minimap,
     return img
 
 
+def draw_player_rings(img: np.ndarray, minimap: Minimap, positions: np.ndarray,
+                      colors: list[tuple[int, int, int]]) -> np.ndarray:
+    """Rings around player dots (e.g. attackers in an offside position)."""
+    r = max(4, int(round(minimap.scale * 0.9))) + 3
+    for pos, color in zip(np.asarray(positions, dtype=float).reshape(-1, 2), colors):
+        if np.isfinite(pos).all():
+            cv2.circle(img, tuple(minimap.to_px(pos)), r, color, 2, cv2.LINE_AA)
+    return img
+
+
 def paste_minimap(frame: np.ndarray, minimap: np.ndarray, pad: int = 16) -> np.ndarray:
     """Places the minimap (with a thin border) at the bottom-center of the frame."""
     h, w = minimap.shape[:2]

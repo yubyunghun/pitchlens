@@ -80,6 +80,12 @@ In the video itself, the offside line of the team defending near the ball is dra
 a line across the pitch in perspective, behind the players, with a ring on the defender who
 sets it. Turn it off with `offside: draw_in_video: false` in the config.
 
+Attackers past the opponents' line are tagged **OFFSIDE POS** with their margin in meters
+(also ringed on the minimap); those within `offside: tolerance_m` (default 0.3 m) of the line
+are **TOO CLOSE** to call. `tracks.csv` gets `offside_status` and `offside_margin_m` columns.
+Being in an offside position is only an offence when a teammate plays the ball; positions
+are measured at the feet (head and body need pose detection, not done yet).
+
 ### Checking the calibration
 ```bash
 pitchlens-track --debug

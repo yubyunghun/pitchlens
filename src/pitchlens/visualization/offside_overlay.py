@@ -13,7 +13,41 @@ import numpy as np
 
 from pitchlens.calibration.homography import PitchCalibration
 from pitchlens.offside.line import BALL, HALFWAY, OffsideLine
+from pitchlens.offside.position import OFFSIDE, TOO_CLOSE, PositionCheck
 from pitchlens.offside.projection import project_band, project_pitch_line
+
+
+FLAG_STYLE = {
+    OFFSIDE: ("OFFSIDE POS", (40, 40, 230)),     # red
+    TOO_CLOSE: ("TOO CLOSE", (0, 200, 255)),     # amber
+}
+FLAG_TEXT = {OFFSIDE: (255, 255, 255), TOO_CLOSE: (0, 0, 0)}  # readable on each background
+
+
+def flag_color(status: str) -> tuple[int, int, int] | None:
+    style = FLAG_STYLE.get(status)
+    return None if style is None else style[1]
+
+
+def draw_position_flags(frame: np.ndarray, boxes: np.ndarray, checks: dict[int, PositionCheck]) -> np.ndarray:
+    """Tag above each attacker that is in (or too close to call for) an offside position."""
+    h = frame.shape[0]
+    scale = max(0.4, h / 1800)
+    for i, check in checks.items():
+        style = FLAG_STYLE.get(check.status)
+        if style is None:
+            continue
+        text, color = style
+        label = f"{text} {check.margin_m:+.1f}m"
+        x1, y1, x2, _ = boxes[i]
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
+        cx = int(round((x1 + x2) / 2))
+        bx = int(np.clip(cx - tw // 2 - 4, 0, frame.shape[1] - tw - 8))
+        by = int(max(th + 8, y1 - 6))
+        cv2.rectangle(frame, (bx, by - th - 6), (bx + tw + 8, by + 3), color, -1)
+        cv2.putText(frame, label, (bx + 4, by - 2), cv2.FONT_HERSHEY_SIMPLEX, scale,
+                    FLAG_TEXT[check.status], 1, cv2.LINE_AA)
+    return frame
 
 
 def _blend(frame: np.ndarray, layer: np.ndarray, mask: np.ndarray, alpha: float) -> None:

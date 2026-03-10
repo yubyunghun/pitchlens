@@ -31,14 +31,16 @@ from pitchlens.calibration.shot_cuts import AppearanceChange, find_cuts
 from pitchlens.detection.classes import CLASS_NAMES, REFEREE
 from pitchlens.offside.direction import DirectionEstimate, infer_attack_directions
 from pitchlens.offside.line import active_defending_team, frame_offside_lines
+from pitchlens.offside.position import DEFAULT_TOLERANCE_M, check_frame
 from pitchlens.tracking.team_assigner import UNKNOWN, TeamAssigner
 from pitchlens.tracking.tracker import PlayerTracker
 from pitchlens.visualization.annotator import annotate, player_color
 from pitchlens.visualization.minimap import (Minimap, draw_attack_arrows, draw_offside_lines,
-                                             draw_projected_pitch, paste_minimap)
-from pitchlens.visualization.offside_overlay import draw_offside_overlay
+                                             draw_player_rings, draw_projected_pitch, paste_minimap)
+from pitchlens.visualization.offside_overlay import draw_offside_overlay, draw_position_flags, flag_color
 
-CSV_HEADER = ["frame", "track_id", "class", "team", "x_px", "y_px", "x_m", "y_m", "calib_distance"]
+CSV_HEADER = ["frame", "track_id", "class", "team", "x_px", "y_px", "x_m", "y_m", "calib_distance",
+              "offside_status", "offside_margin_m"]
 
 
 @dataclass
@@ -156,14 +158,16 @@ def _draw_debug_hud(frame: np.ndarray, idx: int, fc: FrameCalibration | None, sc
 def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
            calibs: list[FrameCalibration | None], team_colors: dict, minimap: Minimap | None,
            csv_path: str | None, debug: bool = False, cuts: list[int] = (),
-           directions: DirectionEstimate | None = None, offside_in_video: bool = True) -> list[float | None]:
+           directions: DirectionEstimate | None = None, offside_in_video: bool = True,
+           offside_tolerance_m: float = DEFAULT_TOLERANCE_M) -> list[float | None]:
     """Pass 2: draw overlays and minimap, write the video and the positions CSV.
 
     debug:            draw the calibrated pitch lines and a status box on every frame, and
                       measure how well the lines match the video (returned per frame).
     directions:       if known, the minimap shows attack directions and offside lines.
     offside_in_video: also draw the offside line of the team defending near the ball
-                      into the video, VAR-style.
+                      into the video, VAR-style, and tag attackers in an offside position.
+    offside_tolerance_m: attackers this close to the line are "too close to call".
     """
     cut_set = set(cuts)
     arrows = [] if directions is None else [
@@ -189,6 +193,7 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                 if fc and directions is not None:
                     lines = frame_offside_lines(pitch_xy, rec.teams, directions, fc.calib, ball_xy,
                                                 rec.players.class_id)
+                checks = check_frame(pitch_xy, rec.teams, lines, offside_tolerance_m) if lines else {}
 
                 base = frame
                 active = active_defending_team(lines, ball_xy, pitch_xy) if offside_in_video else None
@@ -199,6 +204,8 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                         occluders=rec.players.xyxy,
                         defender_foot=None if ln.defender_index is None else feet[ln.defender_index])
                 out = annotate(base, rec.players, rec.teams, team_colors, rec.ball)
+                if checks and offside_in_video:
+                    draw_position_flags(out, rec.players.xyxy, checks)
                 score = None
                 if debug:
                     if fc:
@@ -212,19 +219,25 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                     if lines:
                         draw_offside_lines(mini, minimap, [(ln.x, team_colors.get(t, (200, 200, 200)),
                                                             ln.keeper_assumed) for t, ln in lines.items()])
+                    flagged = [(i, flag_color(c.status)) for i, c in checks.items() if flag_color(c.status)]
+                    if flagged:
+                        draw_player_rings(mini, minimap, pitch_xy[[i for i, _ in flagged]], [c for _, c in flagged])
                     if arrows:
                         draw_attack_arrows(mini, minimap, arrows)
                     paste_minimap(out, mini)
                 sink.write_frame(out)
 
                 if writer:
-                    for tid, cls, team, (px, py), (mx, my) in zip(rec.players.tracker_id, rec.players.class_id,
-                                                                  rec.teams, feet, pitch_xy):
+                    for i, (tid, cls, team, (px, py), (mx, my)) in enumerate(
+                            zip(rec.players.tracker_id, rec.players.class_id, rec.teams, feet, pitch_xy)):
+                        check = checks.get(i)
                         writer.writerow([idx, int(tid), CLASS_NAMES[int(cls)], int(team),
                                          round(float(px), 1), round(float(py), 1),
                                          "" if np.isnan(mx) else round(float(mx), 2),
                                          "" if np.isnan(my) else round(float(my), 2),
-                                         "" if fc is None else fc.distance])
+                                         "" if fc is None else fc.distance,
+                                         "" if check is None else check.status,
+                                         "" if check is None else round(check.margin_m, 2)])
     finally:
         if csv_file:
             csv_file.close()
@@ -295,9 +308,11 @@ def run(config: dict) -> None:
 
     csv_path = (config.get("export") or {}).get("tracks_csv")
     debug = bool((config.get("debug") or {}).get("pitch_overlay", False))
-    offside_in_video = bool((config.get("offside") or {}).get("draw_in_video", True))
+    off_cfg = config.get("offside") or {}
     scores = render(src, dst, info, records, calibs, assigner.team_colors_bgr, minimap, csv_path,
-                    debug=debug, cuts=cuts, directions=directions, offside_in_video=offside_in_video)
+                    debug=debug, cuts=cuts, directions=directions,
+                    offside_in_video=bool(off_cfg.get("draw_in_video", True)),
+                    offside_tolerance_m=float(off_cfg.get("tolerance_m", DEFAULT_TOLERANCE_M)))
     print(f"Saved {dst}" + (f" and {csv_path}" if csv_path else ""))
     if debug and keyframes is not None:
         print(summarize_alignment(scores, info.fps))

@@ -76,3 +76,67 @@ def test_check_frame_uses_the_opponents_line_for_each_team():
     assert checks[1].status == ONSIDE                              # A's defender judged vs B's line
     assert len(checks) == 8
 
+
+def test_video_tags_and_minimap_rings():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_offside_projection import _scene as broadcast_scene
+    from pitchlens.calibration.pitch import Pitch
+    from pitchlens.visualization.minimap import Minimap, draw_player_rings
+    from pitchlens.visualization.offside_overlay import draw_position_flags, flag_color
+
+    frame, calib, boxes, pos, teams = broadcast_scene()        # blue #5 at x=10 is past red's line (11.5)
+    line = offside_line(pos, teams, 0, True)
+    checks = {c.player_index: c for c in check_against_line(pos, teams, line)}
+    assert checks[5].status == OFFSIDE and checks[6].status == ONSIDE
+    out = draw_position_flags(frame.copy(), boxes, checks)
+    changed = (out != frame).any(axis=2)
+    x1, y1, x2, _ = boxes[5].round().astype(int)
+    assert changed[max(0, y1 - 25):y1, x1 - 20:x2 + 20].any()      # tag above the offside attacker
+    x1, y1, x2, _ = boxes[6].round().astype(int)
+    assert not changed[max(0, y1 - 25):y1, x1:x2].any()            # nothing above the onside one
+
+    mm = Minimap(Pitch(), width_px=555)
+    img = mm.render(np.empty((0, 2)), [])
+    before = img.copy()
+    draw_player_rings(img, mm, pos[[5]], [flag_color(OFFSIDE)])
+    assert (img != before).any()
+    assert flag_color(ONSIDE) is None and flag_color(TOO_CLOSE) is not None
+
+
+def test_pipeline_writes_offside_columns(tmp_path):
+    import csv
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent))
+    import supervision as sv
+    import test_pipeline as tp
+    from pitchlens.calibration.keyframes import CalibrationSet
+    from pitchlens.offside.direction import ATTACKS_LEFT, ATTACKS_RIGHT, DirectionEstimate
+    from pitchlens.pipeline import analyze, render, solve
+    from pitchlens.tracking.team_assigner import TeamAssigner
+
+    video = tmp_path / "clip.avi"
+    tp._make_video(video)
+    assigner = TeamAssigner()
+    first = next(sv.get_video_frames_generator(str(video)))
+    assigner.collect(first, tp._boxes(0))
+    assigner.collect(first, tp._boxes(0))
+    assigner.fit()
+    records = analyze(str(video), tp.FakeDetector(), assigner, fps=25)
+    calibs = solve(records, CalibrationSet({0: tp._calib_for(tp._cam(0))}), tp.SIZE)
+    red = assigner.assign(first, tp._boxes(0)[:1], np.array([999]))[0]
+    directions = DirectionEstimate({red: ATTACKS_RIGHT, 1 - red: ATTACKS_LEFT}, 1.0, 1)
+    out_csv = tmp_path / "tracks.csv"
+    render(str(video), str(tmp_path / "out.mp4"), sv.VideoInfo.from_video_path(str(video)), records, calibs,
+           assigner.team_colors_bgr, None, str(out_csv), directions=directions)
+    rows = list(csv.DictReader(out_csv.open()))
+    assert {"offside_status", "offside_margin_m"} <= set(rows[0])
+    statuses = {r["offside_status"] for r in rows}
+    assert statuses - {""} and statuses <= {"", OFFSIDE, ONSIDE, TOO_CLOSE}
+    for r in rows:   # status agrees with the margin
+        if r["offside_status"] == OFFSIDE:
+            assert float(r["offside_margin_m"]) > 0.3
+        elif r["offside_status"] == ONSIDE:
+            assert float(r["offside_margin_m"]) < -0.3
