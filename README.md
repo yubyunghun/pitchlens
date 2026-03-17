@@ -86,6 +86,17 @@ are **TOO CLOSE** to call. `tracks.csv` gets `offside_status` and `offside_margi
 Being in an offside position is only an offence when a teammate plays the ball; positions
 are measured at the feet (head and body need pose detection, not done yet).
 
+### Offside calls
+From the ball path, `pitchlens-track` finds every pass, freezes the moment the ball is played,
+and judges the receiver: **offside**, **too close to call**, **onside**, **no offence** (ball
+to an opponent) or **no decision** (with the reason, e.g. receiver off-screen). It prints a
+summary, writes `outputs/incidents.csv` (one row per pass) and shows a banner in the video
+when an offside call is made.
+
+Calls depend on the ball being detected well; the default COCO model often misses it, so a
+football-trained model is recommended. Not covered yet: interfering with an opponent without
+touching the ball, and restarts exempt from offside (throw-ins, goal kicks, corners).
+
 ### Checking the calibration
 ```bash
 pitchlens-track --debug

@@ -31,13 +31,17 @@ from pitchlens.calibration.shot_cuts import AppearanceChange, find_cuts
 from pitchlens.detection.classes import CLASS_NAMES, REFEREE
 from pitchlens.offside.direction import DirectionEstimate, infer_attack_directions
 from pitchlens.offside.line import active_defending_team, frame_offside_lines
+from pitchlens.offside.incidents import (banner_frames, find_offside_incidents, summarize_incidents,
+                                         write_incidents_csv)
+from pitchlens.offside.passes import FramePlayers
 from pitchlens.offside.position import DEFAULT_TOLERANCE_M, check_frame
 from pitchlens.tracking.team_assigner import UNKNOWN, TeamAssigner
 from pitchlens.tracking.tracker import PlayerTracker
 from pitchlens.visualization.annotator import annotate, player_color
 from pitchlens.visualization.minimap import (Minimap, draw_attack_arrows, draw_offside_lines,
                                              draw_player_rings, draw_projected_pitch, paste_minimap)
-from pitchlens.visualization.offside_overlay import draw_offside_overlay, draw_position_flags, flag_color
+from pitchlens.visualization.offside_overlay import (draw_decision_banner, draw_offside_overlay,
+                                                     draw_position_flags, flag_color)
 
 CSV_HEADER = ["frame", "track_id", "class", "team", "x_px", "y_px", "x_m", "y_m", "calib_distance",
               "offside_status", "offside_margin_m"]
@@ -133,6 +137,20 @@ def team_positions(records: list[FrameRecord],
     return out
 
 
+def offside_inputs(records: list[FrameRecord], calibs: list[FrameCalibration | None]):
+    """Per-frame inputs for the offside chain: players, raw ball positions, calibrations, classes."""
+    players, ball_raw, frame_calibs, classes = [], [], [], []
+    for rec, fc in zip(records, calibs):
+        feet = foot_points(rec.players.xyxy)
+        pos = fc.calib.to_pitch(feet) if fc else np.full_like(feet, np.nan)
+        ids = rec.players.tracker_id if rec.players.tracker_id is not None else np.zeros(0, int)
+        players.append(FramePlayers(pos, rec.teams, ids))
+        ball_raw.append(fc.calib.to_pitch(foot_points(rec.ball.xyxy))[0] if fc and len(rec.ball) else None)
+        frame_calibs.append(fc.calib if fc else None)
+        classes.append(rec.players.class_id)
+    return players, ball_raw, frame_calibs, classes
+
+
 def _hex(bgr: tuple[int, int, int]) -> str:
     return "#{2:02x}{1:02x}{0:02x}".format(*bgr)
 
@@ -159,7 +177,8 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
            calibs: list[FrameCalibration | None], team_colors: dict, minimap: Minimap | None,
            csv_path: str | None, debug: bool = False, cuts: list[int] = (),
            directions: DirectionEstimate | None = None, offside_in_video: bool = True,
-           offside_tolerance_m: float = DEFAULT_TOLERANCE_M) -> list[float | None]:
+           offside_tolerance_m: float = DEFAULT_TOLERANCE_M, ball_path_xy: np.ndarray | None = None,
+           banners: dict | None = None) -> list[float | None]:
     """Pass 2: draw overlays and minimap, write the video and the positions CSV.
 
     debug:            draw the calibrated pitch lines and a status box on every frame, and
@@ -168,7 +187,10 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
     offside_in_video: also draw the offside line of the team defending near the ball
                       into the video, VAR-style, and tag attackers in an offside position.
     offside_tolerance_m: attackers this close to the line are "too close to call".
+    ball_path_xy:     cleaned ball path (pitch meters per frame) used instead of raw detections.
+    banners:          frame -> offside decision to announce on that frame.
     """
+    banners = banners or {}
     cut_set = set(cuts)
     arrows = [] if directions is None else [
         (team_colors.get(t, (200, 200, 200)), directions.directions[t]) for t in sorted(directions.directions)]
@@ -189,6 +211,8 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                 pitch_xy = fc.calib.to_pitch(feet) if fc else np.full_like(feet, np.nan)
                 # the ball is sometimes in the air, so its ground position is only approximate
                 ball_xy = fc.calib.to_pitch(foot_points(rec.ball.xyxy))[0] if fc and len(rec.ball) else None
+                if fc and ball_path_xy is not None and np.isfinite(ball_path_xy[idx]).all():
+                    ball_xy = ball_path_xy[idx]       # cleaned path: fewer misses, no false detections
                 lines = {}
                 if fc and directions is not None:
                     lines = frame_offside_lines(pitch_xy, rec.teams, directions, fc.calib, ball_xy,
@@ -206,6 +230,8 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                 out = annotate(base, rec.players, rec.teams, team_colors, rec.ball)
                 if checks and offside_in_video:
                     draw_position_flags(out, rec.players.xyxy, checks)
+                if idx in banners:
+                    draw_decision_banner(out, banners[idx], info.fps)
                 score = None
                 if debug:
                     if fc:
@@ -300,19 +326,32 @@ def run(config: dict) -> None:
     elif keyframes is not None:
         print("Attacking directions: not enough calibrated frames with players from both teams")
 
+    off_cfg = config.get("offside") or {}
+    tolerance = float(off_cfg.get("tolerance_m", DEFAULT_TOLERANCE_M))
+    export = config.get("export") or {}
+    ball_path_xy, banners = None, {}
+    if directions is not None:
+        path, _, decisions = find_offside_incidents(*offside_inputs(records, calibs), directions,
+                                                    info.fps, tolerance)
+        ball_path_xy = path.positions
+        print(summarize_incidents(decisions, info.fps))
+        if export.get("incidents_csv"):
+            write_incidents_csv(export["incidents_csv"], decisions, info.fps)
+            print(f"  Saved {export['incidents_csv']}")
+        banners = banner_frames(decisions, info.fps, len(records))
+
     mm_cfg = config.get("minimap") or {}
     minimap = None
     if keyframes is not None and mm_cfg.get("enabled", True):
         pitch = next(iter(keyframes.keyframes.values())).pitch
         minimap = Minimap(pitch, width_px=int(info.width * mm_cfg.get("width_fraction", 0.3)))
 
-    csv_path = (config.get("export") or {}).get("tracks_csv")
+    csv_path = export.get("tracks_csv")
     debug = bool((config.get("debug") or {}).get("pitch_overlay", False))
-    off_cfg = config.get("offside") or {}
     scores = render(src, dst, info, records, calibs, assigner.team_colors_bgr, minimap, csv_path,
                     debug=debug, cuts=cuts, directions=directions,
                     offside_in_video=bool(off_cfg.get("draw_in_video", True)),
-                    offside_tolerance_m=float(off_cfg.get("tolerance_m", DEFAULT_TOLERANCE_M)))
+                    offside_tolerance_m=tolerance, ball_path_xy=ball_path_xy, banners=banners)
     print(f"Saved {dst}" + (f" and {csv_path}" if csv_path else ""))
     if debug and keyframes is not None:
         print(summarize_alignment(scores, info.fps))

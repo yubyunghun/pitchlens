@@ -50,6 +50,35 @@ def draw_position_flags(frame: np.ndarray, boxes: np.ndarray, checks: dict[int, 
     return frame
 
 
+def draw_decision_banner(frame: np.ndarray, decision, fps: float) -> np.ndarray:
+    """Banner at the top-center announcing an offside call, e.g. 'OFFSIDE  #11  +2.0 m'."""
+    from pitchlens.offside.decision import OFFSIDE as VERDICT_OFFSIDE
+
+    h, w = frame.shape[:2]
+    is_offside = decision.verdict == VERDICT_OFFSIDE
+    color = FLAG_STYLE[OFFSIDE][1] if is_offside else FLAG_STYLE[TOO_CLOSE][1]
+    text_color = FLAG_TEXT[OFFSIDE] if is_offside else FLAG_TEXT[TOO_CLOSE]
+    check = decision.receiver_check
+    title = "OFFSIDE" if is_offside else "TOO CLOSE TO CALL"
+    receiver = decision.pass_.receive.track_id if decision.pass_.receive else "?"
+    margin = "" if check is None else f"  {check.margin_m:+.2f} m"
+    main = f"{title}   #{receiver}{margin}"
+    sub = f"at the pass, {decision.pass_.kick.frame / fps:.1f}s"
+    if decision.frozen.line is not None and decision.frozen.line.keeper_assumed:
+        sub += " (keeper assumed)"
+    s1, s2 = h / 900, h / 1600
+    (w1, h1), _ = cv2.getTextSize(main, cv2.FONT_HERSHEY_DUPLEX, s1, 2)
+    (w2, h2), _ = cv2.getTextSize(sub, cv2.FONT_HERSHEY_SIMPLEX, s2, 1)
+    bw, bh = max(w1, w2) + 40, h1 + h2 + 36
+    x0, y0 = (w - bw) // 2, int(h * 0.04)
+    cv2.rectangle(frame, (x0, y0), (x0 + bw, y0 + bh), color, -1)
+    cv2.putText(frame, main, (x0 + (bw - w1) // 2, y0 + 12 + h1), cv2.FONT_HERSHEY_DUPLEX, s1,
+                text_color, 2, cv2.LINE_AA)
+    cv2.putText(frame, sub, (x0 + (bw - w2) // 2, y0 + 24 + h1 + h2), cv2.FONT_HERSHEY_SIMPLEX, s2,
+                text_color, 1, cv2.LINE_AA)
+    return frame
+
+
 def _blend(frame: np.ndarray, layer: np.ndarray, mask: np.ndarray, alpha: float) -> None:
     m = mask > 0
     frame[m] = (alpha * layer[m] + (1 - alpha) * frame[m]).astype(np.uint8)

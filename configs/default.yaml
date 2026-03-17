@@ -21,3 +21,4 @@ debug:
   pitch_overlay: false    # or pass --debug: draw calibrated pitch lines + check alignment
 export:
   tracks_csv: outputs/tracks.csv   # per-frame player positions (pixels + meters)
+  incidents_csv: outputs/incidents.csv   # one row per pass with the offside verdict
