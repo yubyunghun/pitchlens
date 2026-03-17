@@ -151,6 +151,44 @@ def offside_inputs(records: list[FrameRecord], calibs: list[FrameCalibration | N
     return players, ball_raw, frame_calibs, classes
 
 
+def render_freeze_frame(frame: np.ndarray, decision, rec: FrameRecord, fc: FrameCalibration,
+                        team_colors: dict, minimap: Minimap | None, fps: float) -> np.ndarray:
+    """VAR still of the kick frame: the defending team's line, offside-position tags, verdict banner."""
+    line = decision.frozen.line
+    defending = line.defending_team
+    color = team_colors.get(defending, (200, 200, 200))
+    feet = foot_points(rec.players.xyxy)
+    ids = list(rec.players.tracker_id) if rec.players.tracker_id is not None else []
+    defender_foot = None if line.defender_index is None else feet[line.defender_index]
+    out = draw_offside_overlay(frame.copy(), fc.calib, line, color, occluders=rec.players.xyxy,
+                               defender_foot=defender_foot)
+    out = annotate(out, rec.players, rec.teams, team_colors, rec.ball)
+    # tag the passer's teammates judged in this decision (by track id -> index in this frame)
+    checks = {ids.index(tid): c for tid, c in decision.frozen.checks.items() if tid in ids}
+    draw_position_flags(out, rec.players.xyxy, checks)
+    receiver = decision.pass_.receive.track_id if decision.pass_.receive else None
+    if receiver in ids:
+        x1, y1, x2, y2 = rec.players.xyxy[ids.index(receiver)].astype(int)
+        cv2.rectangle(out, (x1 - 4, y1 - 4), (x2 + 4, y2 + 4), (255, 255, 255), 2, cv2.LINE_AA)
+    draw_decision_banner(out, decision, fps)
+    if minimap is not None:
+        pitch_xy = fc.calib.to_pitch(feet)
+        colors = [player_color(c, t, team_colors) for c, t in zip(rec.players.class_id, rec.teams)]
+        mini = minimap.render(pitch_xy, colors, ball=decision.pass_.kick.ball)
+        draw_offside_lines(mini, minimap, [(line.x, color, line.keeper_assumed)])
+        flagged = [(i, flag_color(c.status)) for i, c in checks.items() if flag_color(c.status)]
+        if flagged:
+            draw_player_rings(mini, minimap, pitch_xy[[i for i, _ in flagged]], [c for _, c in flagged])
+        paste_minimap(out, mini)
+    return out
+
+
+def freeze_frame_name(decision, fps: float) -> str:
+    t = decision.pass_.kick.frame / fps
+    receiver = decision.pass_.receive.track_id if decision.pass_.receive else "unknown"
+    return f"{int(t // 60):02d}m{t % 60:04.1f}s_{decision.verdict}_player{receiver}.png"
+
+
 def _hex(bgr: tuple[int, int, int]) -> str:
     return "#{2:02x}{1:02x}{0:02x}".format(*bgr)
 
@@ -178,7 +216,8 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
            csv_path: str | None, debug: bool = False, cuts: list[int] = (),
            directions: DirectionEstimate | None = None, offside_in_video: bool = True,
            offside_tolerance_m: float = DEFAULT_TOLERANCE_M, ball_path_xy: np.ndarray | None = None,
-           banners: dict | None = None) -> list[float | None]:
+           banners: dict | None = None, freeze: dict | None = None,
+           freeze_dir: str | None = None) -> list[float | None]:
     """Pass 2: draw overlays and minimap, write the video and the positions CSV.
 
     debug:            draw the calibrated pitch lines and a status box on every frame, and
@@ -189,8 +228,12 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
     offside_tolerance_m: attackers this close to the line are "too close to call".
     ball_path_xy:     cleaned ball path (pitch meters per frame) used instead of raw detections.
     banners:          frame -> offside decision to announce on that frame.
+    freeze:           kick frame -> decisions to save a VAR freeze-frame image for (into freeze_dir).
     """
     banners = banners or {}
+    freeze = freeze or {}
+    if freeze and freeze_dir:
+        Path(freeze_dir).mkdir(parents=True, exist_ok=True)
     cut_set = set(cuts)
     arrows = [] if directions is None else [
         (team_colors.get(t, (200, 200, 200)), directions.directions[t]) for t in sorted(directions.directions)]
@@ -207,6 +250,10 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
             frames = sv.get_video_frames_generator(video)
             for idx, (frame, rec, fc) in enumerate(tqdm(zip(frames, records, calibs), total=len(records),
                                                        desc="Rendering")):
+                if freeze_dir and fc:
+                    for decision in freeze.get(idx, []):
+                        still = render_freeze_frame(frame, decision, rec, fc, team_colors, minimap, info.fps)
+                        cv2.imwrite(str(Path(freeze_dir) / freeze_frame_name(decision, info.fps)), still)
                 feet = foot_points(rec.players.xyxy)
                 pitch_xy = fc.calib.to_pitch(feet) if fc else np.full_like(feet, np.nan)
                 # the ball is sometimes in the air, so its ground position is only approximate
@@ -329,7 +376,7 @@ def run(config: dict) -> None:
     off_cfg = config.get("offside") or {}
     tolerance = float(off_cfg.get("tolerance_m", DEFAULT_TOLERANCE_M))
     export = config.get("export") or {}
-    ball_path_xy, banners = None, {}
+    ball_path_xy, banners, freeze = None, {}, {}
     if directions is not None:
         path, _, decisions = find_offside_incidents(*offside_inputs(records, calibs), directions,
                                                     info.fps, tolerance)
@@ -339,6 +386,9 @@ def run(config: dict) -> None:
             write_incidents_csv(export["incidents_csv"], decisions, info.fps)
             print(f"  Saved {export['incidents_csv']}")
         banners = banner_frames(decisions, info.fps, len(records))
+        for d in decisions:
+            if d.verdict in ("offside", "too_close") and d.frozen.line is not None:
+                freeze.setdefault(d.pass_.kick.frame, []).append(d)
 
     mm_cfg = config.get("minimap") or {}
     minimap = None
@@ -351,8 +401,12 @@ def run(config: dict) -> None:
     scores = render(src, dst, info, records, calibs, assigner.team_colors_bgr, minimap, csv_path,
                     debug=debug, cuts=cuts, directions=directions,
                     offside_in_video=bool(off_cfg.get("draw_in_video", True)),
-                    offside_tolerance_m=tolerance, ball_path_xy=ball_path_xy, banners=banners)
+                    offside_tolerance_m=tolerance, ball_path_xy=ball_path_xy, banners=banners,
+                    freeze=freeze, freeze_dir=export.get("incident_images"))
     print(f"Saved {dst}" + (f" and {csv_path}" if csv_path else ""))
+    if freeze and export.get("incident_images"):
+        n = sum(len(v) for v in freeze.values())
+        print(f"Saved {n} VAR freeze-frame image(s) to {export['incident_images']}/")
     if debug and keyframes is not None:
         print(summarize_alignment(scores, info.fps))
 

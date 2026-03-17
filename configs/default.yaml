@@ -22,3 +22,4 @@ debug:
 export:
   tracks_csv: outputs/tracks.csv   # per-frame player positions (pixels + meters)
   incidents_csv: outputs/incidents.csv   # one row per pass with the offside verdict
+  incident_images: outputs/incidents      # VAR freeze-frame of each offside / too-close call

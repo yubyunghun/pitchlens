@@ -92,6 +92,8 @@ and judges the receiver: **offside**, **too close to call**, **onside**, **no of
 to an opponent) or **no decision** (with the reason, e.g. receiver off-screen). It prints a
 summary, writes `outputs/incidents.csv` (one row per pass) and shows a banner in the video
 when an offside call is made.
+For each offside / too-close call it also saves a VAR freeze-frame image of the moment of
+the pass to `outputs/incidents/`.
 
 Calls depend on the ball being detected well; the default COCO model often misses it, so a
 football-trained model is recommended. Not covered yet: interfering with an opponent without

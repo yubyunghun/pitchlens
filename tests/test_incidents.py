@@ -125,3 +125,44 @@ def test_pipeline_records_become_offside_inputs(tmp_path):
     _, _, decisions = find(players, ball_raw, frame_calibs, classes, DIRECTIONS, 25.0)
     assert decisions == []
 
+
+def _broadcast_decision():
+    """Broadcast scene (red defends left, line 11.5); blue #7 passes to blue #6 who is 1.5 m offside."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent))
+    import supervision as sv
+    from test_offside_projection import _scene
+    from pitchlens.calibration.anchored import FrameCalibration
+    from pitchlens.offside.decision import decide
+    from pitchlens.offside.freeze import freeze_pass
+    from pitchlens.offside.line import offside_line
+    from pitchlens.offside.passes import Pass, Touch
+    from pitchlens.pipeline import FrameRecord
+
+    frame, calib, boxes, pos, teams = _scene()
+    ids = np.arange(1, len(boxes) + 1)
+    dets = sv.Detections(xyxy=boxes, confidence=np.ones(len(boxes)), class_id=np.full(len(boxes), 2))
+    dets.tracker_id = ids
+    rec = FrameRecord(dets, teams, sv.Detections.empty(), None)
+    fp = FramePlayers(pos, teams, ids)
+    lines = [{0: offside_line(pos, teams, 0, True)}]
+    p = Pass(Touch(0, 7, 1, 6, pos[6], 12.0), Touch(20, 6, 1, None, pos[5], 12.0))
+    decision = decide(p, freeze_pass(p, [fp], lines))
+    return frame, rec, FrameCalibration(calib, 0, 0), decision
+
+
+def test_freeze_frame_image(tmp_path):
+    from pitchlens.calibration.pitch import Pitch
+    from pitchlens.pipeline import freeze_frame_name, render_freeze_frame
+    from pitchlens.visualization.minimap import Minimap
+
+    frame, rec, fc, decision = _broadcast_decision()
+    assert decision.verdict == OFFSIDE
+    colors = {0: (40, 40, 210), 1: (210, 90, 30)}
+    still = render_freeze_frame(frame, decision, rec, fc, colors, Minimap(Pitch(), width_px=384), FPS)
+    assert still.shape == frame.shape and (still != frame).any()
+    assert (frame == _broadcast_decision()[0]).all()                 # original frame untouched
+    name = freeze_frame_name(decision, FPS)
+    assert name == "00m00.0s_offside_player6.png"
+    assert cv2.imwrite(str(tmp_path / name), still)
