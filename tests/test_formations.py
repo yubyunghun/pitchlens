@@ -68,3 +68,26 @@ def test_ranking_and_describe():
     assert blend.confidence < 0.5
     assert "(or " in blend.describe(min_confidence=0.5)
 
+
+def test_formation_chart_draws_lines_players_and_title():
+    from pitchlens.calibration.pitch import Pitch
+    from pitchlens.visualization.formation_chart import draw_formation
+    from pitchlens.visualization.minimap import Minimap
+
+    mm = Minimap(Pitch(), width_px=740, margin_m=4.0)
+    team = _team("4-3-3", np.random.default_rng(4), noise=1.0)
+    m = classify_formation(team, True)
+    color = (40, 40, 210)
+    base = mm.render(np.empty((0, 2)), [])
+    img = draw_formation(base.copy(), mm, team, m, color)
+    near = np.linalg.norm(img.astype(int) - np.array(color), axis=2) < 60
+
+    for i in range(10):                                    # every player dot is drawn
+        x, y = mm.to_px(team[i])
+        assert near[y, x]
+    lb, rb = (team[[i for i, s in m.slots.items() if s.role == r][0]] for r in ("LB", "RB"))
+    mid = mm.to_px((lb + rb) / 2)                          # the back line joins LB ... RB
+    xs = np.arange(mid[0] - 6, mid[0] + 7)
+    assert near[mid[1] - 6:mid[1] + 7][:, xs].any()
+    top = (img != base)[: int(mm.margin * mm.scale)]       # the title is in the top margin
+    assert top.any()
