@@ -91,3 +91,13 @@ def test_formation_chart_draws_lines_players_and_title():
     assert near[mid[1] - 6:mid[1] + 7][:, xs].any()
     top = (img != base)[: int(mm.margin * mm.scale)]       # the title is in the top margin
     assert top.any()
+
+
+def test_chains_split_layers_but_keep_a_back_five():
+    def chain_sizes(name):
+        m = classify_formation(_team(name), True)
+        return sorted(len(c) for c in m.chains())
+    assert chain_sizes("4-1-4-1") == [1, 1, 4, 4]          # DM on its own, not zig-zagged into the four
+    assert chain_sizes("4-2-3-1") == [1, 2, 3, 4]
+    assert chain_sizes("5-3-2") == [2, 3, 5]               # wing-backs join the three centre-backs
+    assert chain_sizes("3-5-2") == [2, 3, 5]               # wing-backs join the midfield three

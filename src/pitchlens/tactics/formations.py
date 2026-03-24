@@ -101,6 +101,20 @@ class FormationMatch:
             out[slot.line].append(i)
         return out
 
+    def chains(self, depth_tolerance: float = 0.08) -> list[list[int]]:
+        """Players to join when drawing: same line and (nearly) the same depth, sorted across.
+
+        Splits e.g. a 4-1-4-1's holding midfielder from the midfield four, while a back
+        five (wing-backs slightly higher than the center-backs) stays one chain.
+        """
+        groups: list[tuple[str, float, list[int]]] = []
+        for i, slot in sorted(self.slots.items(), key=lambda kv: (kv[1].line, kv[1].depth)):
+            if groups and groups[-1][0] == slot.line and slot.depth - groups[-1][1] <= depth_tolerance:
+                groups[-1][2].append(i)
+            else:
+                groups.append((slot.line, slot.depth, [i]))
+        return [sorted(idx, key=lambda i: self.slots[i].width) for _, _, idx in groups]
+
 
 def to_attacking_right(positions: np.ndarray, attacks_right: bool, pitch: Pitch = Pitch()) -> np.ndarray:
     """Pitch meters -> (depth, width) meters with the team attacking toward +depth."""

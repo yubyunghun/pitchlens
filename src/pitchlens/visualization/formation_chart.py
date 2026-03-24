@@ -9,7 +9,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from pitchlens.tactics.formations import DEF, FWD, MID, FormationMatch
+from pitchlens.tactics.formations import FormationMatch
 from pitchlens.visualization.minimap import Minimap
 
 
@@ -25,9 +25,9 @@ def draw_formation(img: np.ndarray, minimap: Minimap, positions: np.ndarray, mat
     r = max(5, int(round(minimap.scale * 1.1)))
     thick = max(2, int(round(minimap.scale * 0.3)))
 
-    # 1. join each line (back four, midfield, front) across the pitch
-    for line in (DEF, MID, FWD):
-        idx = [i for i in match.lines()[line] if np.isfinite(pos[i]).all()]
+    # 1. join each line (back four, midfield, front; split where a line has layers) across the pitch
+    for chain in match.chains():
+        idx = [i for i in chain if np.isfinite(pos[i]).all()]
         if len(idx) >= 2:
             pts = minimap.to_px(pos[idx]).reshape(-1, 1, 2).astype(np.int32)
             cv2.polylines(img, [pts], False, (20, 20, 20), thick + 2, cv2.LINE_AA)
