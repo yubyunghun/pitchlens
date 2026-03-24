@@ -77,3 +77,32 @@ def test_csv_and_charts(tmp_path):
     img = cv2.imread(str(saved[0]))
     assert img is not None and img.shape[1] > 3 * 600
 
+
+def test_pipeline_formation_step(tmp_path):
+    """The pipeline's formation step runs on real pipeline records (fake detector, no ball)."""
+    import supervision as sv
+    import test_pipeline as tp
+    from pitchlens.calibration.keyframes import CalibrationSet
+    from pitchlens.calibration.pitch import Pitch
+    from pitchlens.offside.ball_path import build_ball_path
+    from pitchlens.offside.direction import DirectionEstimate
+    from pitchlens.pipeline import analyze, formations_from_inputs, offside_inputs, solve
+    from pitchlens.tracking.team_assigner import TeamAssigner
+
+    video = tmp_path / "clip.avi"
+    tp._make_video(video)
+    assigner = TeamAssigner()
+    first = next(sv.get_video_frames_generator(str(video)))
+    assigner.collect(first, tp._boxes(0))
+    assigner.collect(first, tp._boxes(0))
+    assigner.fit()
+    records = analyze(str(video), tp.FakeDetector(), assigner, fps=25)
+    calibs = solve(records, CalibrationSet({0: tp._calib_for(tp._cam(0))}), tp.SIZE)
+    inputs = offside_inputs(records, calibs)
+    path = build_ball_path(inputs[1], 25.0)
+    report = formations_from_inputs(inputs, path, DirectionEstimate(DIRS, 1.0, 1), 25.0, Pitch(), min_seconds=1.0)
+    assert set(report) == {TEAM_A, TEAM_B}
+    for team in report:
+        assert len(report[team][ALL].shape.outfield) == 3       # 3 players per team in the clip
+        assert report[team][ALL].match is None                  # too few for a formation
+        assert report[team][IN].shape.outfield == []            # no ball -> possession unknown

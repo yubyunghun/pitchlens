@@ -33,8 +33,11 @@ from pitchlens.offside.direction import DirectionEstimate, infer_attack_directio
 from pitchlens.offside.line import active_defending_team, frame_offside_lines
 from pitchlens.offside.incidents import (banner_frames, find_offside_incidents, summarize_incidents,
                                          write_incidents_csv)
-from pitchlens.offside.passes import FramePlayers
+from pitchlens.offside.passes import FramePlayers, detect_touches
 from pitchlens.offside.position import DEFAULT_TOLERANCE_M, check_frame
+from pitchlens.tactics.possession import possession_by_frame
+from pitchlens.tactics.report import (formation_report, save_formation_charts, summarize_formations,
+                                      write_average_positions_csv)
 from pitchlens.tracking.team_assigner import UNKNOWN, TeamAssigner
 from pitchlens.tracking.tracker import PlayerTracker
 from pitchlens.visualization.annotator import annotate, player_color
@@ -149,6 +152,15 @@ def offside_inputs(records: list[FrameRecord], calibs: list[FrameCalibration | N
         frame_calibs.append(fc.calib if fc else None)
         classes.append(rec.players.class_id)
     return players, ball_raw, frame_calibs, classes
+
+
+def formations_from_inputs(inputs, ball_path, directions: DirectionEstimate, fps: float, pitch,
+                           min_seconds: float = 2.0):
+    """Formation report from the offside inputs (players per frame) and the cleaned ball path."""
+    frame_players, _, _, classes = inputs
+    possession = possession_by_frame(detect_touches(ball_path, frame_players), len(frame_players), fps)
+    return formation_report(frame_players, directions.directions, possession, classes, pitch,
+                            min_frames=int(round(min_seconds * fps)))
 
 
 def render_freeze_frame(frame: np.ndarray, decision, rec: FrameRecord, fc: FrameCalibration,
@@ -378,8 +390,8 @@ def run(config: dict) -> None:
     export = config.get("export") or {}
     ball_path_xy, banners, freeze = None, {}, {}
     if directions is not None:
-        path, _, decisions = find_offside_incidents(*offside_inputs(records, calibs), directions,
-                                                    info.fps, tolerance)
+        inputs = offside_inputs(records, calibs)
+        path, _, decisions = find_offside_incidents(*inputs, directions, info.fps, tolerance)
         ball_path_xy = path.positions
         print(summarize_incidents(decisions, info.fps))
         if export.get("incidents_csv"):
@@ -389,6 +401,19 @@ def run(config: dict) -> None:
         for d in decisions:
             if d.verdict in ("offside", "too_close") and d.frozen.line is not None:
                 freeze.setdefault(d.pass_.kick.frame, []).append(d)
+
+        # formations: average shape per team, with and without the ball
+        pitch = next(iter(keyframes.keyframes.values())).pitch
+        min_seconds = float((config.get("tactics") or {}).get("min_seconds", 2.0))
+        report = formations_from_inputs(inputs, path, directions, info.fps, pitch, min_seconds)
+        names = {t: f"team {t} ({_hex(assigner.team_colors_bgr.get(t, (200, 200, 200)))})" for t in report}
+        print(summarize_formations(report, names))
+        if export.get("average_positions_csv"):
+            write_average_positions_csv(export["average_positions_csv"], report)
+            print(f"  Saved {export['average_positions_csv']}")
+        if export.get("formation_charts"):
+            saved = save_formation_charts(export["formation_charts"], report, assigner.team_colors_bgr, pitch)
+            print(f"  Saved {len(saved)} formation chart(s) to {export['formation_charts']}/")
 
     mm_cfg = config.get("minimap") or {}
     minimap = None

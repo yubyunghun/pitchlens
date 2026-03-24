@@ -99,6 +99,18 @@ Calls depend on the ball being detected well; the default COCO model often misse
 football-trained model is recommended. Not covered yet: interfering with an opponent without
 touching the ball, and restarts exempt from offside (throw-ins, goal kicks, corners).
 
+### Formations
+`pitchlens-track` also averages every player's position per team, separately **with the ball**,
+**without the ball** and **overall** (possession comes from the detected touches), and matches
+each shape to a formation: 4-4-2, 4-3-3, 4-2-3-1, 4-1-4-1, 3-5-2, 3-4-3, 5-3-2 or 5-4-1, with a
+confidence (close calls read like `4-2-3-1 (or 4-1-4-1)`). Track fragments of one player are
+merged and the goalkeeper is left out. Outputs:
+- a printed summary per team and phase,
+- `outputs/average_positions.csv`: each player's average position and role per phase,
+- `outputs/formations/teamN_formation.png`: the classic average-positions chart, one panel per phase.
+
+Players must be seen for `tactics: min_seconds` (default 2 s) in a phase to count.
+
 ### Checking the calibration
 ```bash
 pitchlens-track --debug
