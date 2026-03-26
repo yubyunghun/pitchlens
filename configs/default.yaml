@@ -19,6 +19,9 @@ offside:
   tolerance_m: 0.3        # attackers this close to the line are "too close to call"
 tactics:
   min_seconds: 2.0        # a player must be seen this long (per phase) to count in a formation
+  timeline_window_s: 15.0 # formation over time: window length...
+  timeline_step_s: 5.0    # ...and how far it moves each step
+  timeline_min_seconds: 3.0  # a player must be seen this long within a window
 debug:
   pitch_overlay: false    # or pass --debug: draw calibrated pitch lines + check alignment
 export:
@@ -27,3 +30,4 @@ export:
   incident_images: outputs/incidents      # VAR freeze-frame of each offside / too-close call
   average_positions_csv: outputs/average_positions.csv   # per team and phase: player, role, x, y
   formation_charts: outputs/formations    # one chart per team: with / without the ball / overall
+  formation_timeline_csv: outputs/formation_timeline.csv   # formation segments over time per team

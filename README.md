@@ -108,6 +108,9 @@ merged and the goalkeeper is left out. Outputs:
 - a printed summary per team and phase,
 - `outputs/average_positions.csv`: each player's average position and role per phase,
 - `outputs/formations/teamN_formation.png`: the classic average-positions chart, one panel per phase.
+- `outputs/formation_timeline.csv` and a printed timeline: the formation in a 15 s window sliding
+  through the clip, merged into segments (e.g. `0:00-0:35 4-4-2, 0:35-1:10 3-5-2`), so tactical
+  switches show up; unclear windows are reported as `unclear`.
 
 Players must be seen for `tactics: min_seconds` (default 2 s) in a phase to count.
 

@@ -38,6 +38,7 @@ from pitchlens.offside.position import DEFAULT_TOLERANCE_M, check_frame
 from pitchlens.tactics.possession import possession_by_frame
 from pitchlens.tactics.report import (formation_report, save_formation_charts, summarize_formations,
                                       write_average_positions_csv)
+from pitchlens.tactics.timeline import merge_segments, summarize_timeline, window_formations, write_timeline_csv
 from pitchlens.tracking.team_assigner import UNKNOWN, TeamAssigner
 from pitchlens.tracking.tracker import PlayerTracker
 from pitchlens.visualization.annotator import annotate, player_color
@@ -414,6 +415,17 @@ def run(config: dict) -> None:
         if export.get("formation_charts"):
             saved = save_formation_charts(export["formation_charts"], report, assigner.team_colors_bgr, pitch)
             print(f"  Saved {len(saved)} formation chart(s) to {export['formation_charts']}/")
+
+        tac_cfg = config.get("tactics") or {}
+        segments = merge_segments(window_formations(
+            inputs[0], directions.directions, info.fps, inputs[3], pitch,
+            window_s=float(tac_cfg.get("timeline_window_s", 15.0)),
+            step_s=float(tac_cfg.get("timeline_step_s", 5.0)),
+            min_seconds=float(tac_cfg.get("timeline_min_seconds", 3.0))))
+        print(summarize_timeline(segments, info.fps, names))
+        if export.get("formation_timeline_csv"):
+            write_timeline_csv(export["formation_timeline_csv"], segments, info.fps)
+            print(f"  Saved {export['formation_timeline_csv']}")
 
     mm_cfg = config.get("minimap") or {}
     minimap = None
