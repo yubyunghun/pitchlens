@@ -35,9 +35,10 @@ from pitchlens.offside.incidents import (banner_frames, find_offside_incidents, 
                                          write_incidents_csv)
 from pitchlens.offside.passes import FramePlayers, detect_touches
 from pitchlens.offside.position import DEFAULT_TOLERANCE_M, check_frame
-from pitchlens.tactics.possession import possession_by_frame
+from pitchlens.tactics.possession import ALL, possession_by_frame
 from pitchlens.tactics.report import (formation_report, save_formation_charts, summarize_formations,
                                       write_average_positions_csv)
+from pitchlens.tactics.shape_metrics import shape_metrics, summarize_metrics, write_metrics_csv
 from pitchlens.tactics.timeline import merge_segments, summarize_timeline, window_formations, write_timeline_csv
 from pitchlens.tracking.team_assigner import UNKNOWN, TeamAssigner
 from pitchlens.tracking.tracker import PlayerTracker
@@ -162,6 +163,15 @@ def formations_from_inputs(inputs, ball_path, directions: DirectionEstimate, fps
     possession = possession_by_frame(detect_touches(ball_path, frame_players), len(frame_players), fps)
     return formation_report(frame_players, directions.directions, possession, classes, pitch,
                             min_frames=int(round(min_seconds * fps)))
+
+
+def metrics_from_inputs(inputs, ball_path, directions: DirectionEstimate, fps: float, pitch, report):
+    """Team shape metrics per phase; goalkeepers found by the formation report are left out."""
+    frame_players = inputs[0]
+    possession = possession_by_frame(detect_touches(ball_path, frame_players), len(frame_players), fps)
+    keepers = {team: set(phases[ALL].shape.goalkeeper.track_ids)
+               for team, phases in report.items() if phases[ALL].shape.goalkeeper is not None}
+    return shape_metrics(frame_players, directions.directions, possession, keepers, pitch)
 
 
 def render_freeze_frame(frame: np.ndarray, decision, rec: FrameRecord, fc: FrameCalibration,
@@ -426,6 +436,12 @@ def run(config: dict) -> None:
         if export.get("formation_timeline_csv"):
             write_timeline_csv(export["formation_timeline_csv"], segments, info.fps)
             print(f"  Saved {export['formation_timeline_csv']}")
+
+        metrics = metrics_from_inputs(inputs, path, directions, info.fps, pitch, report)
+        print(summarize_metrics(metrics, names))
+        if export.get("shape_metrics_csv"):
+            write_metrics_csv(export["shape_metrics_csv"], metrics)
+            print(f"  Saved {export['shape_metrics_csv']}")
 
     mm_cfg = config.get("minimap") or {}
     minimap = None

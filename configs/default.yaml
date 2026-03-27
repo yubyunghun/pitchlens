@@ -31,3 +31,4 @@ export:
   average_positions_csv: outputs/average_positions.csv   # per team and phase: player, role, x, y
   formation_charts: outputs/formations    # one chart per team: with / without the ball / overall
   formation_timeline_csv: outputs/formation_timeline.csv   # formation segments over time per team
+  shape_metrics_csv: outputs/shape_metrics.csv   # width, length, defensive line, area per team and phase

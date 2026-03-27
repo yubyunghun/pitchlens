@@ -114,6 +114,12 @@ merged and the goalkeeper is left out. Outputs:
 
 Players must be seen for `tactics: min_seconds` (default 2 s) in a phase to count.
 
+### Team shape numbers
+Per team and phase it also measures **width**, **length** (deepest to most advanced outfield
+player), **defensive line height** (the back four's distance from their own goal: a high press
+vs a low block) and **area** (how compact the team is), as medians over frames where at least 8
+outfield players are visible. They are printed and saved to `outputs/shape_metrics.csv`.
+
 ### Checking the calibration
 ```bash
 pitchlens-track --debug
