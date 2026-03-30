@@ -49,6 +49,12 @@ class Lane:
     openness: float               # 0 (cut) .. 1 (clear)
     blocker_index: int | None     # defender who comes closest to cutting it
     status: str                   # OPEN / RISKY / BLOCKED
+    forward_m: float = 0.0        # meters gained toward the opponents' goal (< 0: backwards)
+    bypassed: int = 0             # opponents the pass goes past (between ball and receiver in depth)
+
+    def value(self, bypass_worth_m: float = 8.0) -> float:
+        """How useful the pass is if it arrives: ground gained, plus extra per opponent bypassed."""
+        return self.forward_m + bypass_worth_m * self.bypassed
 
 
 def lane_margin(ball: np.ndarray, receiver: np.ndarray, defenders: np.ndarray,
@@ -106,6 +112,42 @@ def passing_lanes(positions: np.ndarray, teams: np.ndarray, carrier: int, ball: 
         lanes.append(Lane(int(i), float(np.linalg.norm(pos[i] - start)), margin, openness,
                           None if d is None else int(defender_idx[d]), status_of(openness, model)))
     return lanes
+
+
+def score_lanes(lanes: list[Lane], positions: np.ndarray, teams: np.ndarray, start: np.ndarray,
+                attacks_right: bool) -> list[Lane]:
+    """Fills in forward_m and bypassed for each lane (in place) and returns them.
+
+    start: where the pass starts (ball, or the carrier). attacks_right: the passing team's direction.
+    """
+    pos = np.asarray(positions, dtype=float).reshape(-1, 2)
+    teams = np.asarray(teams)
+    sign = 1.0 if attacks_right else -1.0
+    start_depth = sign * float(start[0])
+    for lane in lanes:
+        team = teams[lane.receiver_index]
+        recv_depth = sign * pos[lane.receiver_index, 0]
+        lane.forward_m = float(recv_depth - start_depth)
+        opp = np.isfinite(pos).all(axis=1) & (teams != team) & (teams >= 0)
+        opp_depth = sign * pos[opp, 0]
+        lane.bypassed = int(((opp_depth > start_depth) & (opp_depth < recv_depth)).sum())
+    return lanes
+
+
+def best_option(lanes: list[Lane], bypass_worth_m: float = 8.0) -> Lane | None:
+    """The most valuable OPEN lane, or None if nothing is open."""
+    open_lanes = [ln for ln in lanes if ln.status == OPEN]
+    if not open_lanes:
+        return None
+    return max(open_lanes, key=lambda ln: (ln.value(bypass_worth_m), ln.openness))
+
+
+def evaluate_lanes(positions: np.ndarray, teams: np.ndarray, carrier: int, attacks_right: bool,
+                   ball: np.ndarray | None = None, model: LaneModel = LaneModel()) -> list[Lane]:
+    """Lanes from the ball to every teammate, with openness and value."""
+    pos = np.asarray(positions, dtype=float).reshape(-1, 2)
+    start = pos[carrier] if ball is None or not np.isfinite(ball).all() else np.asarray(ball, float)
+    return score_lanes(passing_lanes(pos, teams, carrier, start, model), pos, teams, start, attacks_right)
 
 
 def ball_carrier(positions: np.ndarray, teams: np.ndarray, ball: np.ndarray, team: int | None = None,

@@ -85,3 +85,48 @@ def test_ball_carrier():
     assert ball_carrier(pos, teams, np.array([70.0, 50.0])) is None     # nobody within 3 m
     assert ball_carrier(pos, teams, None) is None
 
+
+def _attack():
+    """A attacks right. Carrier at x=40; B's midfield at x=50, back line at x=70."""
+    pos = np.array([[40, 34],                      # 0 carrier
+                    [38, 10],                      # 1 back/sideways, open
+                    [62, 14],                      # 2 free between B's lines, in the gap on the left
+                    [78, 50],                      # 3 behind B's back line, B's defender in the way
+                    [55, 34],                      # 4 straight ahead, B midfielder in the lane
+                    [50, 36], [50, 50], [53, 43],  # B midfield (5, 6, 7), shifted to the right
+                    [70, 18], [70, 30], [70, 40], [76, 50]], float)   # B back line (8-11)
+    teams = np.array([TEAM_A] * 5 + [TEAM_B] * 7)
+    return pos, teams
+
+
+def test_forward_gain_and_bypassed_opponents():
+    from pitchlens.tactics.passing_lanes import evaluate_lanes
+    pos, teams = _attack()
+    lanes = {ln.receiver_index: ln for ln in evaluate_lanes(pos, teams, carrier=0, attacks_right=True)}
+    assert lanes[1].forward_m == pytest.approx(-2.0) and lanes[1].bypassed == 0
+    assert lanes[2].forward_m == pytest.approx(22.0) and lanes[2].bypassed == 3   # past the midfield three
+    assert lanes[3].bypassed == 7                                                 # past everyone
+    assert lanes[1].value() < lanes[2].value() < lanes[3].value()
+
+
+def test_best_option_is_the_most_valuable_open_lane():
+    from pitchlens.tactics.passing_lanes import best_option, evaluate_lanes
+    pos, teams = _attack()
+    lanes = evaluate_lanes(pos, teams, carrier=0, attacks_right=True)
+    by_idx = {ln.receiver_index: ln for ln in lanes}
+    assert by_idx[4].status == BLOCKED                  # midfielder standing in the lane
+    assert by_idx[3].status != OPEN                     # defender next to the runner
+    best = best_option(lanes)
+    assert best is not None and best.status == OPEN
+    assert best.receiver_index == 2                     # through the lines to the free man
+    # the same picture attacking left (mirrored) gives the same answer
+    mirrored = np.c_[105 - pos[:, 0], 68 - pos[:, 1]]
+    best_left = best_option(evaluate_lanes(mirrored, teams, carrier=0, attacks_right=False))
+    assert best_left.receiver_index == 2
+
+
+def test_nothing_open():
+    from pitchlens.tactics.passing_lanes import best_option
+    pos = np.array([[30, 34], [40, 34], [35, 34]], float)       # defender right between them
+    teams = np.array([TEAM_A, TEAM_A, TEAM_B])
+    assert best_option(passing_lanes(pos, teams, carrier=0)) is None
