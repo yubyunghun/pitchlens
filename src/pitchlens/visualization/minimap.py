@@ -46,7 +46,11 @@ class Minimap:
     def render(self, positions: np.ndarray, colors: list[tuple[int, int, int]],
                labels: list[str] | None = None, ball: np.ndarray | None = None) -> np.ndarray:
         """positions: (N, 2) pitch meters (NaN rows are skipped)."""
-        img = self._base.copy()
+        return self.draw_players(self._base.copy(), positions, colors, labels, ball)
+
+    def draw_players(self, img: np.ndarray, positions: np.ndarray, colors: list[tuple[int, int, int]],
+                     labels: list[str] | None = None, ball: np.ndarray | None = None) -> np.ndarray:
+        """Player dots (and the ball) onto an already rendered minimap, e.g. on top of lanes."""
         r = max(4, int(round(self.scale * 0.9)))
         lim = np.array([self.pitch.length, self.pitch.width]) + self.margin
         for i, (pos, color) in enumerate(zip(np.asarray(positions).reshape(-1, 2), colors)):

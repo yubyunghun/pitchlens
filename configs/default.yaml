@@ -22,6 +22,12 @@ tactics:
   timeline_window_s: 15.0 # formation over time: window length...
   timeline_step_s: 5.0    # ...and how far it moves each step
   timeline_min_seconds: 3.0  # a player must be seen this long within a window
+passing_lanes:
+  draw_in_video: true      # lanes from the ball to teammates: green open, amber risky, red blocked
+  draw_on_minimap: true
+  pass_speed: 15.0         # m/s of a firm ground pass
+  run_speed: 7.0           # m/s of a defender sprinting to cut a lane
+  reaction_s: 0.3          # s before a defender reacts
 debug:
   pitch_overlay: false    # or pass --debug: draw calibrated pitch lines + check alignment
 export:

@@ -35,6 +35,8 @@ from pitchlens.offside.incidents import (banner_frames, find_offside_incidents, 
                                          write_incidents_csv)
 from pitchlens.offside.passes import FramePlayers, detect_touches
 from pitchlens.offside.position import DEFAULT_TOLERANCE_M, check_frame
+from pitchlens.tactics.lane_options import frame_options
+from pitchlens.tactics.passing_lanes import LaneModel
 from pitchlens.tactics.possession import ALL, possession_by_frame
 from pitchlens.tactics.report import (formation_report, save_formation_charts, summarize_formations,
                                       write_average_positions_csv)
@@ -45,6 +47,7 @@ from pitchlens.tracking.tracker import PlayerTracker
 from pitchlens.visualization.annotator import annotate, player_color
 from pitchlens.visualization.minimap import (Minimap, draw_attack_arrows, draw_offside_lines,
                                              draw_player_rings, draw_projected_pitch, paste_minimap)
+from pitchlens.visualization.lanes_overlay import draw_lanes_minimap, draw_lanes_video
 from pitchlens.visualization.offside_overlay import (draw_decision_banner, draw_offside_overlay,
                                                      draw_position_flags, flag_color)
 
@@ -174,6 +177,16 @@ def metrics_from_inputs(inputs, ball_path, directions: DirectionEstimate, fps: f
     return shape_metrics(frame_players, directions.directions, possession, keepers, pitch)
 
 
+def options_from_inputs(inputs, ball_path, directions: DirectionEstimate, fps: float, lane_cfg: dict):
+    """Passing options of the team on the ball, per frame (see tactics/lane_options.py)."""
+    frame_players = inputs[0]
+    possession = possession_by_frame(detect_touches(ball_path, frame_players), len(frame_players), fps)
+    model = LaneModel(pass_speed=float(lane_cfg.get("pass_speed", 15.0)),
+                      run_speed=float(lane_cfg.get("run_speed", 7.0)),
+                      reaction=float(lane_cfg.get("reaction_s", 0.3)))
+    return frame_options(frame_players, ball_path.positions, possession, directions.directions, model)
+
+
 def render_freeze_frame(frame: np.ndarray, decision, rec: FrameRecord, fc: FrameCalibration,
                         team_colors: dict, minimap: Minimap | None, fps: float) -> np.ndarray:
     """VAR still of the kick frame: the defending team's line, offside-position tags, verdict banner."""
@@ -240,7 +253,8 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
            directions: DirectionEstimate | None = None, offside_in_video: bool = True,
            offside_tolerance_m: float = DEFAULT_TOLERANCE_M, ball_path_xy: np.ndarray | None = None,
            banners: dict | None = None, freeze: dict | None = None,
-           freeze_dir: str | None = None) -> list[float | None]:
+           freeze_dir: str | None = None, lane_options: list | None = None,
+           lanes_in_video: bool = True, lanes_on_minimap: bool = True) -> list[float | None]:
     """Pass 2: draw overlays and minimap, write the video and the positions CSV.
 
     debug:            draw the calibrated pitch lines and a status box on every frame, and
@@ -252,6 +266,8 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
     ball_path_xy:     cleaned ball path (pitch meters per frame) used instead of raw detections.
     banners:          frame -> offside decision to announce on that frame.
     freeze:           kick frame -> decisions to save a VAR freeze-frame image for (into freeze_dir).
+    lane_options:     per frame, the passing options of the team on the ball (or None);
+                      drawn in the video and/or on the minimap.
     """
     banners = banners or {}
     freeze = freeze or {}
@@ -297,6 +313,10 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                         frame.copy(), fc.calib, ln, team_colors.get(active, (200, 200, 200)),
                         occluders=rec.players.xyxy,
                         defender_foot=None if ln.defender_index is None else feet[ln.defender_index])
+                opts = lane_options[idx] if lane_options is not None and idx < len(lane_options) else None
+                if opts is not None and fc and lanes_in_video:   # also behind the players
+                    base = draw_lanes_video(base.copy() if base is frame else base, fc.calib, pitch_xy, opts,
+                                            occluders=rec.players.xyxy)
                 out = annotate(base, rec.players, rec.teams, team_colors, rec.ball)
                 if checks and offside_in_video:
                     draw_position_flags(out, rec.players.xyxy, checks)
@@ -312,6 +332,9 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                 if minimap and fc:
                     colors = [player_color(c, t, team_colors) for c, t in zip(rec.players.class_id, rec.teams)]
                     mini = minimap.render(pitch_xy, colors, ball=ball_xy)
+                    if opts is not None and lanes_on_minimap:
+                        draw_lanes_minimap(mini, minimap, pitch_xy, opts)
+                        minimap.draw_players(mini, pitch_xy, colors, ball=ball_xy)   # dots on top of lanes
                     if lines:
                         draw_offside_lines(mini, minimap, [(ln.x, team_colors.get(t, (200, 200, 200)),
                                                             ln.keeper_assumed) for t, ln in lines.items()])
@@ -399,7 +422,7 @@ def run(config: dict) -> None:
     off_cfg = config.get("offside") or {}
     tolerance = float(off_cfg.get("tolerance_m", DEFAULT_TOLERANCE_M))
     export = config.get("export") or {}
-    ball_path_xy, banners, freeze = None, {}, {}
+    ball_path_xy, banners, freeze, lane_options = None, {}, {}, None
     if directions is not None:
         inputs = offside_inputs(records, calibs)
         path, _, decisions = find_offside_incidents(*inputs, directions, info.fps, tolerance)
@@ -443,6 +466,8 @@ def run(config: dict) -> None:
             write_metrics_csv(export["shape_metrics_csv"], metrics)
             print(f"  Saved {export['shape_metrics_csv']}")
 
+        lane_options = options_from_inputs(inputs, path, directions, info.fps, config.get("passing_lanes") or {})
+
     mm_cfg = config.get("minimap") or {}
     minimap = None
     if keyframes is not None and mm_cfg.get("enabled", True):
@@ -451,11 +476,14 @@ def run(config: dict) -> None:
 
     csv_path = export.get("tracks_csv")
     debug = bool((config.get("debug") or {}).get("pitch_overlay", False))
+    lane_cfg = config.get("passing_lanes") or {}
     scores = render(src, dst, info, records, calibs, assigner.team_colors_bgr, minimap, csv_path,
                     debug=debug, cuts=cuts, directions=directions,
                     offside_in_video=bool(off_cfg.get("draw_in_video", True)),
                     offside_tolerance_m=tolerance, ball_path_xy=ball_path_xy, banners=banners,
-                    freeze=freeze, freeze_dir=export.get("incident_images"))
+                    freeze=freeze, freeze_dir=export.get("incident_images"), lane_options=lane_options,
+                    lanes_in_video=bool(lane_cfg.get("draw_in_video", True)),
+                    lanes_on_minimap=bool(lane_cfg.get("draw_on_minimap", True)))
     print(f"Saved {dst}" + (f" and {csv_path}" if csv_path else ""))
     if freeze and export.get("incident_images"):
         n = sum(len(v) for v in freeze.values())

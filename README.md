@@ -120,6 +120,15 @@ player), **defensive line height** (the back four's distance from their own goal
 vs a low block) and **area** (how compact the team is), as medians over frames where at least 8
 outfield players are visible. They are printed and saved to `outputs/shape_metrics.csv`.
 
+### Passing lanes
+Whenever a team has the ball at a player's feet, PitchLens checks the lane from the ball to
+every teammate: a defender cuts it if they can reach some point of the lane before the ball
+*and* before the receiver (who steps in to meet the pass). Lanes are drawn on the grass and on
+the minimap: **green** open, **amber** risky, **red** blocked. The thick lane is the best
+option: the open pass that gains the most ground, counting each opponent it bypasses (a line
+broken) as 8 extra meters. Model speeds are in the config (`passing_lanes:`); it's geometry
+only (no body orientation or lofted passes), so "open" means "probably open on the ground".
+
 ### Checking the calibration
 ```bash
 pitchlens-track --debug
