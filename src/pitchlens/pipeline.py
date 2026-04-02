@@ -35,7 +35,7 @@ from pitchlens.offside.incidents import (banner_frames, find_offside_incidents, 
                                          write_incidents_csv)
 from pitchlens.offside.passes import FramePlayers, detect_touches
 from pitchlens.offside.position import DEFAULT_TOLERANCE_M, check_frame
-from pitchlens.tactics.lane_options import frame_options
+from pitchlens.tactics.lane_options import frame_options, write_options_csv
 from pitchlens.tactics.passing_lanes import LaneModel
 from pitchlens.tactics.possession import ALL, possession_by_frame
 from pitchlens.tactics.report import (formation_report, save_formation_charts, summarize_formations,
@@ -467,6 +467,9 @@ def run(config: dict) -> None:
             print(f"  Saved {export['shape_metrics_csv']}")
 
         lane_options = options_from_inputs(inputs, path, directions, info.fps, config.get("passing_lanes") or {})
+        if export.get("passing_options_csv"):
+            n = write_options_csv(export["passing_options_csv"], lane_options, info.fps)
+            print(f"Passing options: {n} frames with a team on the ball; saved {export['passing_options_csv']}")
 
     mm_cfg = config.get("minimap") or {}
     minimap = None

@@ -128,6 +128,8 @@ the minimap: **green** open, **amber** risky, **red** blocked. The thick lane is
 option: the open pass that gains the most ground, counting each opponent it bypasses (a line
 broken) as 8 extra meters. Model speeds are in the config (`passing_lanes:`); it's geometry
 only (no body orientation or lofted passes), so "open" means "probably open on the ground".
+`outputs/passing_options.csv` has one row per frame on the ball: the carrier, how many lanes are
+open / risky / blocked, and the best option (receiver, meters gained, opponents bypassed).
 
 ### Checking the calibration
 ```bash

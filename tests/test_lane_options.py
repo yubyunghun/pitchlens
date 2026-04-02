@@ -99,3 +99,20 @@ def test_render_draws_lanes(tmp_path):
     f_plain = list(sv.get_video_frames_generator(str(plain)))[10]
     f_lanes = list(sv.get_video_frames_generator(str(lanes)))[10]
     assert (np.abs(f_plain.astype(int) - f_lanes.astype(int)) > 30).any()
+
+
+def test_options_csv(tmp_path):
+    import csv
+    from pitchlens.tactics.lane_options import write_options_csv
+    frames, pos = _frames(4)
+    ball = np.tile(pos[0] + [0.5, 0.0], (4, 1))
+    opts = frame_options(frames, ball, np.array([TEAM_A, NO_POSSESSION, TEAM_A, TEAM_A]), DIRS)
+    out = tmp_path / "passing_options.csv"
+    assert write_options_csv(out, opts, fps=25.0) == 3
+    rows = list(csv.DictReader(out.open()))
+    assert [r["frame"] for r in rows] == ["0", "2", "3"]
+    r = rows[0]
+    assert r["carrier_track_id"] == "100" and r["best_receiver_track_id"] == "102"     # track id, not index
+    assert int(r["open"]) + int(r["risky"]) + int(r["blocked"]) == 4
+    assert float(r["best_forward_m"]) == 21.5 and r["best_bypassed"] == "3"   # from the ball, 0.5 m ahead
+    assert opts[0].count("blocked") == int(r["blocked"]) >= 2
