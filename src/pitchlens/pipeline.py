@@ -33,9 +33,10 @@ from pitchlens.offside.direction import DirectionEstimate, infer_attack_directio
 from pitchlens.offside.line import active_defending_team, frame_offside_lines
 from pitchlens.offside.incidents import (banner_frames, find_offside_incidents, summarize_incidents,
                                          write_incidents_csv)
-from pitchlens.offside.passes import FramePlayers, detect_touches
+from pitchlens.offside.passes import FramePlayers, detect_touches, find_passes
 from pitchlens.offside.position import DEFAULT_TOLERANCE_M, check_frame
 from pitchlens.tactics.lane_options import frame_options, write_options_csv
+from pitchlens.tactics.pass_choice import analyze_passes, summarize_passing, team_passing, write_pass_choices_csv
 from pitchlens.tactics.passing_lanes import LaneModel
 from pitchlens.tactics.possession import ALL, possession_by_frame
 from pitchlens.tactics.report import (formation_report, save_formation_charts, summarize_formations,
@@ -470,6 +471,12 @@ def run(config: dict) -> None:
         if export.get("passing_options_csv"):
             n = write_options_csv(export["passing_options_csv"], lane_options, info.fps)
             print(f"Passing options: {n} frames with a team on the ball; saved {export['passing_options_csv']}")
+
+        choices = analyze_passes(find_passes(detect_touches(path, inputs[0])), lane_options)
+        print(summarize_passing(team_passing(choices, lane_options, sorted(directions.directions)), names))
+        if export.get("pass_choices_csv"):
+            write_pass_choices_csv(export["pass_choices_csv"], choices, info.fps)
+            print(f"  Saved {export['pass_choices_csv']}")
 
     mm_cfg = config.get("minimap") or {}
     minimap = None

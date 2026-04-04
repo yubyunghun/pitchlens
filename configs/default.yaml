@@ -39,3 +39,4 @@ export:
   formation_timeline_csv: outputs/formation_timeline.csv   # formation segments over time per team
   shape_metrics_csv: outputs/shape_metrics.csv   # width, length, defensive line, area per team and phase
   passing_options_csv: outputs/passing_options.csv   # per frame on the ball: open/risky/blocked lanes, best option
+  pass_choices_csv: outputs/pass_choices.csv   # per pass: lane used, forward, lines broken, best option taken

@@ -131,6 +131,12 @@ only (no body orientation or lofted passes), so "open" means "probably open on t
 `outputs/passing_options.csv` has one row per frame on the ball: the carrier, how many lanes are
 open / risky / blocked, and the best option (receiver, meters gained, opponents bypassed).
 
+For every detected pass it also checks the options the passer had just before the kick: was the
+lane used open, did it go forward, did it break a line, and was it the best option? Per team this
+gives a passing profile (completed / forward / line-breaking / best option taken), the average
+number of open lanes on the ball, and, on defence, how many open forward lanes the team allowed.
+Printed by `pitchlens-track` and saved per pass to `outputs/pass_choices.csv`.
+
 ### Checking the calibration
 ```bash
 pitchlens-track --debug
