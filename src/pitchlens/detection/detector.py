@@ -8,19 +8,7 @@ import numpy as np
 import supervision as sv
 from ultralytics import YOLO
 
-from pitchlens.detection.classes import BALL, GOALKEEPER, PLAYER, REFEREE
-
-# How model class names map onto PitchLens classes. Covers COCO models
-# ("person", "sports ball") and football-finetuned models.
-_NAME_MAP = {
-    "ball": BALL,
-    "sports ball": BALL,
-    "football": BALL,
-    "goalkeeper": GOALKEEPER,
-    "player": PLAYER,
-    "person": PLAYER,
-    "referee": REFEREE,
-}
+from pitchlens.detection.classes import BALL, map_class_names
 
 
 @dataclass
@@ -37,11 +25,7 @@ class Detector:
         self.ball_confidence = ball_confidence
         self.device = device
         # model class id -> PitchLens class id (unknown classes are dropped)
-        self._class_lut = {
-            idx: _NAME_MAP[name.lower()]
-            for idx, name in self.model.names.items()
-            if name.lower() in _NAME_MAP
-        }
+        self._class_lut = map_class_names(self.model.names)
         if not self._class_lut:
             raise ValueError(f"Model {model_path} has no football-relevant classes: "
                              f"{list(self.model.names.values())}")
