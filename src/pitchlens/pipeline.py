@@ -384,7 +384,10 @@ def run(config: dict) -> None:
     src, dst = config["video"]["input"], config["video"]["output"]
     det_cfg = config["detection"]
     detector = Detector(det_cfg["model"], det_cfg.get("confidence", 0.3),
-                        det_cfg.get("ball_confidence", 0.15), det_cfg.get("device"))
+                        det_cfg.get("ball_confidence", 0.15), det_cfg.get("device"),
+                        ball_tiles=bool(det_cfg.get("ball_tiles", False)),
+                        tile_size=int(det_cfg.get("tile_size", 640)),
+                        tile_overlap=float(det_cfg.get("tile_overlap", 0.2)))
     cam_cfg = config.get("camera_motion") or {}
     track_camera = cam_cfg.get("enabled", True)
 

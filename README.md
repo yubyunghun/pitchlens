@@ -30,6 +30,22 @@ python -m venv .venv
 pip install -e .
 ```
 
+## Train a football model (recommended)
+The default COCO model often misses the ball and can't tell goalkeepers or referees from
+players. A model trained on football footage fixes that. Get a YOLO-format football dataset
+(e.g. a "football players detection" dataset exported from Roboflow as YOLOv8, with classes such
+as ball / goalkeeper / player / referee), then:
+```bash
+pitchlens-dataset datasets/football     # checks labels, classes and ball size; exit code 1 on problems
+pitchlens-train --data datasets/football --device 0
+```
+Training checks the dataset first, picks the image size from the ball size (1280 if the ball
+would be under 8 px at 640), fine-tunes `yolov8m.pt` and saves `models/football.pt`. Set
+`detection: model: models/football.pt` in the config to use it. A GPU is strongly recommended.
+
+For very small balls, `detection: ball_tiles: true` also searches for the ball on overlapping
+full-resolution tiles of each frame (slower, one model run per tile).
+
 ## Calibrate the pitch
 Player positions in meters (needed for the minimap, offside, and formations) come from
 mapping the camera view onto a 105 x 68 m pitch:

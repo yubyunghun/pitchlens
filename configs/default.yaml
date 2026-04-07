@@ -2,10 +2,13 @@ video:
   input: data/raw/match.mp4
   output: outputs/annotated.mp4
 detection:
-  model: yolov8x.pt        # COCO model; swap for a football-finetuned model later
+  model: yolov8x.pt        # COCO model; after pitchlens-train use models/football.pt
   confidence: 0.3          # players / referees
   ball_confidence: 0.15    # ball is small, so allow lower confidence
   device: null             # null = auto, or "cpu", "0" for first GPU
+  ball_tiles: false        # also search for the ball on full-resolution tiles (slower, finds small balls)
+  tile_size: 640           # tile size in px (use the model's training imgsz)
+  tile_overlap: 0.2        # tiles overlap so a ball on a border is fully inside one
 camera_motion:
   enabled: true          # follow camera pans/zooms; false = static camera
   max_gap: 10            # failed motion estimates in a row before the chain breaks
