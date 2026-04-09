@@ -153,6 +153,11 @@ gives a passing profile (completed / forward / line-breaking / best option taken
 number of open lanes on the ball, and, on defence, how many open forward lanes the team allowed.
 Printed by `pitchlens-track` and saved per pass to `outputs/pass_choices.csv`.
 
+### Match report
+At the end of a run, `outputs/report.html` collects everything in one self-contained page
+(images embedded, so the single file can be shared): overview, formations with charts,
+formation timeline, team shape numbers, passing profile, and offside calls with freeze-frames.
+
 ### Checking the calibration
 ```bash
 pitchlens-track --debug

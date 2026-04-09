@@ -71,3 +71,33 @@ def test_large_images_are_shrunk():
     small = ReportData(video="c.mp4", fps=25.0, frames=10, offside=d.offside,
                        offside_images={0: np.zeros((720, 1280, 3), np.uint8)})
     assert abs(len(render_html(d)) - len(render_html(small))) < 2000      # 4K still stored at 1280 wide
+
+
+def test_pipeline_collects_report_data(tmp_path):
+    """build_report_data turns a run's results into ReportData, reading freeze-frames back from disk."""
+    import cv2
+    import test_formation_report as tfr
+    import test_incidents as ti
+    from pitchlens.offside.direction import DirectionEstimate
+    from pitchlens.offside.incidents import find_offside_incidents
+    from pitchlens.pipeline import build_report_data, freeze_frame_name
+    from pitchlens.tactics.report import formation_report
+
+    frames, possession = tfr._game()
+    formations = formation_report(frames, tfr.DIRS, possession)
+    players, raw, calibs, classes = ti._clip(forward_x=95.0)
+    _, _, decisions = find_offside_incidents(players, raw, calibs, classes, ti.DIRECTIONS, ti.FPS)
+    still_dir = tmp_path / "incidents"
+    still_dir.mkdir()
+    cv2.imwrite(str(still_dir / freeze_frame_name(decisions[0], 25.0)), np.full((90, 160, 3), 128, np.uint8))
+    data = build_report_data("clip.mp4", 25.0, 300, {TEAM_A: (40, 40, 210), TEAM_B: (210, 90, 30)},
+                             DirectionEstimate({TEAM_A: 1, TEAM_B: -1}, 0.9, 50), [object()] * 250 + [None] * 50,
+                             2, [120], formations, [], [], [], decisions, str(still_dir))
+    assert data.calibrated_frames == 250 and data.keyframes == 2 and data.cuts == [120]
+    assert data.teams[TEAM_A].attacks == "left -> right" and data.teams[TEAM_B].color_hex == "#1e5ad2"
+    assert set(data.formation_charts) == {TEAM_A, TEAM_B}
+    assert list(data.offside_images) == [0] and data.offside_images[0].shape == (90, 160, 3)
+    assert "data:image/png;base64," in render_html(data)
+    # nothing analysed (no calibration): still a valid report
+    empty = build_report_data("clip.mp4", 25.0, 300, {0: (1, 2, 3)}, None, [None] * 300, 0, [], None, [], [], [], [])
+    assert empty.teams[0].attacks is None and "Not available" in render_html(empty)

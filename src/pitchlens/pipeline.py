@@ -38,9 +38,11 @@ from pitchlens.offside.position import DEFAULT_TOLERANCE_M, check_frame
 from pitchlens.tactics.lane_options import frame_options, write_options_csv
 from pitchlens.tactics.pass_choice import analyze_passes, summarize_passing, team_passing, write_pass_choices_csv
 from pitchlens.tactics.passing_lanes import LaneModel
+from pitchlens.calibration.pitch import Pitch
+from pitchlens.report.match_report import ReportData, TeamInfo, write_report
 from pitchlens.tactics.possession import ALL, possession_by_frame
-from pitchlens.tactics.report import (formation_report, save_formation_charts, summarize_formations,
-                                      write_average_positions_csv)
+from pitchlens.tactics.report import (formation_chart, formation_report, save_formation_charts,
+                                      summarize_formations, write_average_positions_csv)
 from pitchlens.tactics.shape_metrics import shape_metrics, summarize_metrics, write_metrics_csv
 from pitchlens.tactics.timeline import merge_segments, summarize_timeline, window_formations, write_timeline_csv
 from pitchlens.tracking.team_assigner import UNKNOWN, TeamAssigner
@@ -427,6 +429,7 @@ def run(config: dict) -> None:
     tolerance = float(off_cfg.get("tolerance_m", DEFAULT_TOLERANCE_M))
     export = config.get("export") or {}
     ball_path_xy, banners, freeze, lane_options = None, {}, {}, None
+    decisions, report, segments, metrics, passing_stats, pitch = [], None, [], [], [], None
     if directions is not None:
         inputs = offside_inputs(records, calibs)
         path, _, decisions = find_offside_incidents(*inputs, directions, info.fps, tolerance)
@@ -476,7 +479,8 @@ def run(config: dict) -> None:
             print(f"Passing options: {n} frames with a team on the ball; saved {export['passing_options_csv']}")
 
         choices = analyze_passes(find_passes(detect_touches(path, inputs[0])), lane_options)
-        print(summarize_passing(team_passing(choices, lane_options, sorted(directions.directions)), names))
+        passing_stats = team_passing(choices, lane_options, sorted(directions.directions))
+        print(summarize_passing(passing_stats, names))
         if export.get("pass_choices_csv"):
             write_pass_choices_csv(export["pass_choices_csv"], choices, info.fps)
             print(f"  Saved {export['pass_choices_csv']}")
@@ -503,6 +507,42 @@ def run(config: dict) -> None:
         print(f"Saved {n} VAR freeze-frame image(s) to {export['incident_images']}/")
     if debug and keyframes is not None:
         print(summarize_alignment(scores, info.fps))
+
+    if export.get("report_html"):
+        data = build_report_data(src, info.fps, len(records), assigner.team_colors_bgr, directions, calibs,
+                                 0 if keyframes is None else len(keyframes), cuts, report, segments, metrics,
+                                 passing_stats, decisions, export.get("incident_images"), pitch)
+        print(f"Saved match report {write_report(export['report_html'], data)}")
+
+
+def build_report_data(video: str, fps: float, n_frames: int, team_colors: dict,
+                      directions: DirectionEstimate | None, calibs: list, n_keyframes: int, cuts: list[int],
+                      formations, segments, metrics, passing_stats, decisions,
+                      freeze_dir: str | None = None, pitch=None) -> ReportData:
+    """Collects a run's results for the HTML report (freeze-frames are read back from freeze_dir)."""
+    teams = {}
+    for t in (sorted(directions.directions) if directions is not None else sorted(team_colors)):
+        teams[t] = TeamInfo(f"team {t}", tuple(int(v) for v in team_colors.get(t, (200, 200, 200))),
+                            None if directions is None else directions.describe(t))
+    charts = {}
+    if formations:
+        for t in formations:
+            charts[t] = formation_chart(formations[t], teams[t].color_bgr if t in teams else (200, 200, 200),
+                                        pitch or Pitch())
+    images = {}
+    if freeze_dir:
+        for i, d in enumerate(decisions):
+            path = Path(freeze_dir) / freeze_frame_name(d, fps)
+            if path.exists():
+                img = cv2.imread(str(path))
+                if img is not None:
+                    images[i] = img
+    return ReportData(video=video, fps=fps, frames=n_frames, teams=teams,
+                      calibrated_frames=sum(c is not None for c in calibs), keyframes=n_keyframes, cuts=list(cuts),
+                      direction_confidence=None if directions is None else directions.confidence,
+                      formations=formations, formation_charts=charts, timeline=list(segments),
+                      metrics=list(metrics), passing=list(passing_stats), offside=list(decisions),
+                      offside_images=images)
 
 
 def main() -> None:
