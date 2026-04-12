@@ -26,21 +26,39 @@ from pitchlens.training.dataset import DatasetReport, format_report, inspect_dat
 MIN_BALL_PX = 8.0
 
 
+BASE_MODELS = {"detect": "yolov8m.pt", "pose": "yolov8m-pose.pt"}
+OUTPUTS = {"detect": "models/football.pt", "pose": "models/pitch_keypoints.pt"}
+CONFIG_KEYS = {"detect": "detection:\n    model", "pose": "calibration:\n    auto_model"}
+
+
 @dataclass
 class TrainSettings:
-    base_model: str = "yolov8m.pt"     # pretrained starting point (n/s/m/l/x: faster -> more accurate)
+    task: str = "detect"               # "detect" (players/ball) or "pose" (pitch landmarks)
+    base_model: str | None = None      # pretrained starting point; None = by task (n/s/m/l/x sizes exist)
     epochs: int = 100
     imgsz: int | None = None           # None = choose from the ball size in the dataset
     batch: int = -1                    # -1 = let ultralytics pick what fits in GPU memory
     patience: int = 20                 # stop early after this many epochs without improvement
     device: str | None = None
     project: str = "models/runs"
-    name: str = "football"
-    output: str = "models/football.pt"
+    name: str | None = None            # None = by task
+    output: str | None = None          # None = by task
+
+    def __post_init__(self):
+        if self.task not in BASE_MODELS:
+            raise ValueError(f"task must be one of {list(BASE_MODELS)}")
+        self.base_model = self.base_model or BASE_MODELS[self.task]
+        self.name = self.name or ("football" if self.task == "detect" else "pitch_keypoints")
+        self.output = self.output or OUTPUTS[self.task]
 
 
 def suggest_imgsz(report: DatasetReport, measured_at: int = 1280) -> int:
-    """640 if the ball is big enough there, else 1280 (sizes in the report are measured at `measured_at`)."""
+    """640 if the ball is big enough there, else 1280 (sizes in the report are measured at `measured_at`).
+
+    Keypoint datasets (pitch lines are large) always use 640.
+    """
+    if report.is_pose:
+        return 640
     widths = [w for s in report.splits.values() for w in s.ball_widths_px]
     if not widths:
         return 1280
@@ -86,6 +104,10 @@ def train(dataset: str | Path, settings: TrainSettings = TrainSettings(), force:
     if report.problems and not force:
         print("Fix the problems above, or pass --force to train anyway.")
         return None
+    if report.is_pose != (settings.task == "pose"):
+        print(f"The dataset is a {'keypoint' if report.is_pose else 'detection'} dataset but --task is "
+              f"{settings.task}; use --task {'pose' if report.is_pose else 'detect'}.")
+        return None
     imgsz = settings.imgsz or suggest_imgsz(report)
     print(f"Training {settings.base_model} at imgsz {imgsz} for up to {settings.epochs} epochs...")
 
@@ -102,22 +124,24 @@ def train(dataset: str | Path, settings: TrainSettings = TrainSettings(), force:
     out.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(best, out)
     print(f"Saved {out}. To use it, set in configs/default.yaml:\n"
-          f"  detection:\n    model: {out.as_posix()}")
+          f"  {CONFIG_KEYS[settings.task]}: {out.as_posix()}")
     return out
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train a football detection model for PitchLens")
+    parser = argparse.ArgumentParser(description="Train a football detection or pitch-landmark model for PitchLens")
     parser.add_argument("--data", required=True, help="dataset folder containing data.yaml")
-    parser.add_argument("--model", default=TrainSettings.base_model, help="pretrained base model")
+    parser.add_argument("--task", choices=list(BASE_MODELS), default="detect",
+                        help="detect: players/ball/referees; pose: pitch landmarks for auto calibration")
+    parser.add_argument("--model", default=None, help="pretrained base model (default by task)")
     parser.add_argument("--epochs", type=int, default=TrainSettings.epochs)
     parser.add_argument("--imgsz", type=int, default=None, help="default: chosen from the ball size")
     parser.add_argument("--batch", type=int, default=TrainSettings.batch)
     parser.add_argument("--device", default=None, help='e.g. "0" for the first GPU, "cpu"')
-    parser.add_argument("--output", default=TrainSettings.output)
+    parser.add_argument("--output", default=None, help="where to save the trained weights (default by task)")
     parser.add_argument("--force", action="store_true", help="train even if the dataset check finds problems")
     a = parser.parse_args()
-    settings = TrainSettings(base_model=a.model, epochs=a.epochs, imgsz=a.imgsz, batch=a.batch,
+    settings = TrainSettings(task=a.task, base_model=a.model, epochs=a.epochs, imgsz=a.imgsz, batch=a.batch,
                              device=a.device, output=a.output)
     raise SystemExit(0 if train(a.data, settings, a.force) else 1)
 

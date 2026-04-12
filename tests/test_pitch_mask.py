@@ -44,3 +44,13 @@ def test_background_mask_removes_players_and_edge():
 def test_no_grass_gives_empty_mask():
     f = np.full((100, 100, 3), STANDS, np.uint8)
     assert background_mask(f).sum() == 0
+
+
+def test_non_grass_objects_masked_without_detections():
+    f, _ = _scene()
+    plain = background_mask(f, edge_margin=10)
+    masked = background_mask(f, edge_margin=10, mask_non_grass=True, object_padding=5)
+    assert plain[230, 110] == 255 and masked[230, 110] == 0     # player A (red) cut out without a box
+    assert masked[280, 410] == 0                                # player B (blue)
+    assert masked[262, 110] == 0                                # padding around the player
+    assert masked[240, 320] == 255 and masked[300, 600] == 255  # white line and open grass kept

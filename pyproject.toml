@@ -14,6 +14,7 @@ pitchlens-track = "pitchlens.pipeline:main"
 pitchlens-calibrate = "pitchlens.calibration.tool:main"
 pitchlens-dataset = "pitchlens.training.dataset:main"
 pitchlens-train = "pitchlens.training.train:main"
+pitchlens-keypoint-data = "pitchlens.training.keypoints:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

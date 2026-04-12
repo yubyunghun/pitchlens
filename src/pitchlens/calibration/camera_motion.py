@@ -92,8 +92,10 @@ class CameraMotionEstimator:
 class CameraMotionTracker:
     """Feeds consecutive frames to the estimator; remembers the previous frame."""
 
-    def __init__(self, estimator: CameraMotionEstimator | None = None):
+    def __init__(self, estimator: CameraMotionEstimator | None = None, mask_non_grass: bool = False):
+        """mask_non_grass: without detections, cut out non-grass objects (see pitch_mask.background_mask)."""
         self.estimator = estimator or CameraMotionEstimator()
+        self.mask_non_grass = mask_non_grass
         self._prev_gray: np.ndarray | None = None
         self._prev_mask: np.ndarray | None = None
         self._last_H: np.ndarray | None = None  # last successful motion, used as the next guess
@@ -101,7 +103,7 @@ class CameraMotionTracker:
     def update(self, frame: np.ndarray, exclude_boxes: np.ndarray | None = None) -> MotionResult | None:
         """Motion from the previous frame to this one (None on the first frame or on failure)."""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        mask = background_mask(frame, exclude_boxes)
+        mask = background_mask(frame, exclude_boxes, mask_non_grass=self.mask_non_grass)
         result = None
         if self._prev_gray is not None:
             result = None

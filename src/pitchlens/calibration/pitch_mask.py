@@ -41,17 +41,31 @@ def grass_mask(frame: np.ndarray, min_area_fraction: float = 0.02, line_width: i
 
 
 def background_mask(frame: np.ndarray, exclude_boxes: np.ndarray | None = None,
-                    box_padding: float = 0.2, edge_margin: int = 15) -> np.ndarray:
+                    box_padding: float = 0.2, edge_margin: int = 15,
+                    mask_non_grass: bool = False, object_padding: int = 9) -> np.ndarray:
     """uint8 mask of pitch pixels that are safe to track camera motion on.
 
-    exclude_boxes: (N, 4) xyxy boxes of players/ball/referees to cut out.
-    box_padding:   grow each box by this fraction of its size (shadows, blur).
-    edge_margin:   pixels to shrink the pitch region away from stands/graphics.
+    exclude_boxes:  (N, 4) xyxy boxes of players/ball/referees to cut out.
+    box_padding:    grow each box by this fraction of its size (shadows, blur).
+    edge_margin:    pixels to shrink the pitch region away from stands/graphics.
+    mask_non_grass: without detections (no boxes), cut out everything on the pitch that is
+                    neither grass nor white line (players in coloured kits), grown by
+                    `object_padding` px.
     """
     mask = grass_mask(frame)
     if edge_margin > 0:
         k = 2 * edge_margin + 1
         mask = cv2.erode(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+
+    if mask_non_grass:
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        grass = cv2.inRange(hsv, GRASS_LOW, GRASS_HIGH)
+        line = cv2.inRange(hsv, (0, 0, 160), (180, 70, 255))
+        objects = cv2.bitwise_not(grass | line)
+        objects = cv2.morphologyEx(objects, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))   # drop speckle
+        k = 2 * object_padding + 1
+        objects = cv2.dilate(objects, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        mask[objects > 0] = 0
 
     if exclude_boxes is not None and len(exclude_boxes):
         h, w = mask.shape

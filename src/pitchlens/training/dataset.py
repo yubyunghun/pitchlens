@@ -52,6 +52,11 @@ class DatasetReport:
     names: dict[int, str]
     mapping: dict[int, int]                   # dataset class id -> PitchLens class id
     splits: dict[str, SplitReport]
+    kpt_shape: tuple[int, int] | None = None  # set for keypoint (pose) datasets, e.g. (33, 3)
+
+    @property
+    def is_pose(self) -> bool:
+        return self.kpt_shape is not None
 
     @property
     def problems(self) -> list[str]:
@@ -60,9 +65,8 @@ class DatasetReport:
             out.append("no train split found")
         if "val" not in self.splits:
             out.append("no validation split found (valid/ or val/)")
-        for wanted in (BALL,):
-            if wanted not in self.mapping.values():
-                out.append(f"no dataset class maps to PitchLens '{CLASS_NAMES[wanted]}'")
+        if not self.is_pose and BALL not in self.mapping.values():   # detection datasets need the ball
+            out.append(f"no dataset class maps to PitchLens '{CLASS_NAMES[BALL]}'")
         for s in self.splits.values():
             if s.images == 0:
                 out.append(f"{s.name}: no images")
@@ -79,6 +83,12 @@ def load_names(root: Path) -> dict[int, str]:
     if isinstance(names, list):
         return dict(enumerate(names))
     return {int(k): str(v) for k, v in names.items()}
+
+
+def load_kpt_shape(root: Path) -> tuple[int, int] | None:
+    data = yaml.safe_load((root / "data.yaml").read_text()) or {}
+    shape = data.get("kpt_shape")
+    return None if not shape else (int(shape[0]), int(shape[1]))
 
 
 def find_splits(root: Path) -> dict[str, Path]:
@@ -99,9 +109,11 @@ def _image_size(path: Path) -> tuple[int, int] | None:
 
 
 def check_split(name: str, folder: Path, n_classes: int, ball_ids: set[int] = frozenset(),
-                imgsz: int = 1280, size_samples: int = 200) -> SplitReport:
-    """ball_ids: dataset class ids that are the ball (their size is measured on up to size_samples images)."""
+                imgsz: int = 1280, size_samples: int = 200, kpt_values: int = 0) -> SplitReport:
+    """ball_ids: dataset class ids that are the ball (their size is measured on up to size_samples images).
+    kpt_values: extra values per line in a keypoint (pose) dataset, e.g. 33 * 3."""
     report = SplitReport(name)
+    expected = 5 + kpt_values
     images = {p.stem: p for p in (folder / "images").iterdir() if p.suffix.lower() in IMAGE_EXTS}
     labels_dir = folder / "labels"
     labels = {p.stem: p for p in labels_dir.glob("*.txt")} if labels_dir.is_dir() else {}
@@ -117,14 +129,18 @@ def check_split(name: str, folder: Path, n_classes: int, ball_ids: set[int] = fr
             if not parts:
                 continue
             where = f"{label.name}:{n}"
-            if len(parts) != 5:
-                report.bad_lines.append(f"{where}: expected 5 values, got {len(parts)}")
+            if len(parts) != expected:
+                report.bad_lines.append(f"{where}: expected {expected} values, got {len(parts)}")
                 continue
             try:
                 cls = int(parts[0])
-                cx, cy, w, h = map(float, parts[1:])
+                cx, cy, w, h = map(float, parts[1:5])
+                kpts = [float(v) for v in parts[5:]]
             except ValueError:
                 report.bad_lines.append(f"{where}: not numbers")
+                continue
+            if kpts and not all(0 <= v <= 2 for v in kpts):
+                report.bad_lines.append(f"{where}: keypoint value outside 0..1 (or visibility 0..2)")
                 continue
             if not 0 <= cls < n_classes:
                 report.bad_lines.append(f"{where}: class {cls} not in data.yaml")
@@ -149,14 +165,22 @@ def inspect_dataset(root: str | Path, imgsz: int = 1280) -> DatasetReport:
     names = load_names(root)
     mapping = map_class_names(names)
     ball_ids = {i for i, c in mapping.items() if c == BALL}
-    splits = {s: check_split(s, folder, len(names), ball_ids, imgsz) for s, folder in find_splits(root).items()}
-    return DatasetReport(root, names, mapping, splits)
+    kpt_shape = load_kpt_shape(root)
+    kpt_values = 0 if kpt_shape is None else kpt_shape[0] * kpt_shape[1]
+    splits = {s: check_split(s, folder, len(names), ball_ids, imgsz, kpt_values=kpt_values)
+              for s, folder in find_splits(root).items()}
+    return DatasetReport(root, names, mapping, splits, kpt_shape)
 
 
 def format_report(r: DatasetReport, imgsz: int = 1280) -> str:
-    lines = [f"Dataset {r.root}", "Classes:"]
+    lines = [f"Dataset {r.root}"]
+    if r.is_pose:
+        lines.append(f"Keypoint (pose) dataset: {r.kpt_shape[0]} keypoints per object")
+    lines.append("Classes:")
     for i, n in sorted(r.names.items()):
         target = CLASS_NAMES.get(r.mapping.get(i), None)
+        if r.is_pose:
+            target = target or "keypoint object"
         lines.append(f"  {i}: {n:<12} -> {target if target else 'ignored by PitchLens'}")
     for s in r.splits.values():
         counts = ", ".join(f"{r.names.get(c, c)} {n}" for c, n in sorted(s.boxes.items()))
