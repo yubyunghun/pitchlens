@@ -14,6 +14,9 @@ camera_motion:
   max_gap: 10            # failed motion estimates in a row before the chain breaks
 calibration:
   path: configs/calibration.json   # keyframes from pitchlens-calibrate; skipped if missing
+  auto_model: null         # pitch-landmark model (pitchlens-train --task pose) for automatic keyframes
+  auto_every_s: 1.0        # run it once per this many seconds of video
+  auto_min_confidence: 0.5 # landmarks below this confidence are ignored
 minimap:
   enabled: true
   width_fraction: 0.3      # minimap width as a fraction of the video width

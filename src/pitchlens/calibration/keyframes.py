@@ -41,6 +41,12 @@ class CalibrationSet:
     def nearest(self, frame: int) -> int | None:
         return min(self.keyframes, key=lambda k: (abs(k - frame), k)) if self.keyframes else None
 
+    def merged_with(self, other: "CalibrationSet | None") -> "CalibrationSet":
+        """Keyframes of both; on the same frame this set's (e.g. manual) calibration wins."""
+        if other is None:
+            return CalibrationSet(dict(self.keyframes), self.video)
+        return CalibrationSet({**other.keyframes, **self.keyframes}, self.video or other.video)
+
     def for_image_size(self, width: int, height: int) -> "CalibrationSet":
         return CalibrationSet({f: c.for_image_size(width, height) for f, c in self.keyframes.items()}, self.video)
 

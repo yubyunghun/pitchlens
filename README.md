@@ -75,6 +75,18 @@ Camera cuts (close-ups, replays, switching cameras) are detected automatically, 
 Frames that can't be linked to any keyframe (e.g. a shot you didn't calibrate) are left
 without pitch coordinates rather than given wrong ones.
 
+### Automatic calibration (no clicking)
+A pitch-landmark model can find the box corners, line ends and center circle itself. Train one
+from clips you have already calibrated by hand: every calibrated frame labels all 33 landmarks.
+```bash
+pitchlens-keypoint-data --video data/raw/match.mp4 --calibration configs/calibration.json
+pitchlens-train --task pose --data datasets/pitch_keypoints
+```
+Then set `calibration: auto_model: models/pitch_keypoints.pt`. During tracking the model checks
+one frame per second (`auto_every_s`); frames where enough landmarks agree become automatic
+keyframes, combined with any manual ones (manual wins on the same frame). Shots the model isn't
+sure about still need a manual keyframe; the run prints how many frames were rejected and why.
+
 ## Run player tracking
 Put a clip at `data/raw/match.mp4`, then:
 ```bash

@@ -27,6 +27,7 @@ from pitchlens.calibration.anchored import FrameCalibration, solve_calibrations
 from pitchlens.calibration.camera_motion import CameraMotionTracker
 from pitchlens.calibration.drift import line_alignment
 from pitchlens.calibration.keyframes import CalibrationSet
+from pitchlens.calibration.keypoint_model import keyframes_from_predictions
 from pitchlens.calibration.shot_cuts import AppearanceChange, find_cuts
 from pitchlens.detection.classes import CLASS_NAMES, REFEREE
 from pitchlens.offside.direction import DirectionEstimate, infer_attack_directions
@@ -65,6 +66,7 @@ class FrameRecord:
     ball: sv.Detections
     motion: np.ndarray | None    # camera motion from the previous frame (None if unknown)
     change: float = 0.0          # appearance change from the previous frame (0..1), for cut detection
+    pitch_keypoints: np.ndarray | None = None   # (33, 3) landmark predictions, on frames where they were run
 
 
 def foot_points(xyxy: np.ndarray) -> np.ndarray:
@@ -85,8 +87,8 @@ def fit_teams(detector, video_path: str, n_frames: int = 30, stride: int = 10) -
 
 def load_keyframes(path: str | None, info: sv.VideoInfo) -> CalibrationSet | None:
     if not path or not Path(path).exists():
-        print("No calibration file found; skipping minimap and pitch coordinates "
-              "(run pitchlens-calibrate to create one)")
+        print("No manual calibration file found (run pitchlens-calibrate to create one, "
+              "or set calibration.auto_model for automatic calibration)")
         return None
     calib_set = CalibrationSet.load(path)
     if not len(calib_set):
@@ -96,13 +98,17 @@ def load_keyframes(path: str | None, info: sv.VideoInfo) -> CalibrationSet | Non
 
 
 def analyze(video: str, detector, assigner: TeamAssigner, fps: float, track_camera: bool = True,
-            total: int | None = None) -> list[FrameRecord]:
-    """Pass 1: detection, tracking, teams and camera motion for every frame."""
+            total: int | None = None, keypoint_detector=None, keypoint_every: int = 25) -> list[FrameRecord]:
+    """Pass 1: detection, tracking, teams and camera motion for every frame.
+
+    keypoint_detector: optional pitch-landmark model, run on every `keypoint_every`-th frame
+                       (its predictions become automatic calibration keyframes).
+    """
     tracker = PlayerTracker(fps=fps)
     camera = CameraMotionTracker() if track_camera else None
     appearance = AppearanceChange()
     records = []
-    for frame in tqdm(sv.get_video_frames_generator(video), total=total, desc="Analyzing"):
+    for t, frame in enumerate(tqdm(sv.get_video_frames_generator(video), total=total, desc="Analyzing")):
         dets = detector.detect(frame)
         players = tracker.update(dets.players)
         teams = np.full(len(players), UNKNOWN, dtype=int)
@@ -115,8 +121,20 @@ def analyze(video: str, detector, assigner: TeamAssigner, fps: float, track_came
             moving = np.vstack([dets.players.xyxy.reshape(-1, 4), dets.ball.xyxy.reshape(-1, 4)])
             result = camera.update(frame, moving)
             motion = result.H if result is not None else None
-        records.append(FrameRecord(players, teams, dets.ball, motion, appearance.update(frame)))
+        keypoints = None                                     # None = model not run on this frame
+        if keypoint_detector is not None and t % max(1, keypoint_every) == 0:
+            keypoints = keypoint_detector.predict(frame)
+            if keypoints is None:
+                keypoints = np.zeros((0, 3))                 # run, but no pitch found
+        records.append(FrameRecord(players, teams, dets.ball, motion, appearance.update(frame), keypoints))
     return records
+
+
+def auto_keyframes(records: list[FrameRecord], image_size: tuple[int, int], pitch: Pitch = Pitch(),
+                   min_confidence: float = 0.5) -> tuple[CalibrationSet, dict[int, str]]:
+    """Keyframes from the landmark predictions stored in the records (accepted, frame -> rejection reason)."""
+    predictions = {t: r.pitch_keypoints for t, r in enumerate(records) if r.pitch_keypoints is not None}
+    return keyframes_from_predictions(predictions, image_size, pitch, min_confidence=min_confidence)
 
 
 def detect_cuts(records: list[FrameRecord]) -> list[int]:
@@ -397,7 +415,14 @@ def run(config: dict) -> None:
     assigner = fit_teams(detector, src)
 
     info = sv.VideoInfo.from_video_path(src)
-    records = analyze(src, detector, assigner, info.fps, track_camera, info.total_frames)
+    cal_cfg = config.get("calibration") or {}
+    keypoint_detector = None
+    if cal_cfg.get("auto_model"):
+        from pitchlens.calibration.keypoint_model import KeypointDetector
+        keypoint_detector = KeypointDetector(cal_cfg["auto_model"], det_cfg.get("device"))
+    keypoint_every = max(1, int(round(float(cal_cfg.get("auto_every_s", 1.0)) * info.fps)))
+    records = analyze(src, detector, assigner, info.fps, track_camera, info.total_frames,
+                      keypoint_detector, keypoint_every)
 
     cuts = detect_cuts(records) if track_camera else []
     if cuts:
@@ -405,7 +430,15 @@ def run(config: dict) -> None:
         print(f"Detected {len(cuts)} camera cut(s): {stamps}{' ...' if len(cuts) > 10 else ''}")
         print("  Calibrate one frame after each cut so that shot gets pitch coordinates too")
 
-    keyframes = load_keyframes((config.get("calibration") or {}).get("path"), info)
+    keyframes = load_keyframes(cal_cfg.get("path"), info)
+    if keypoint_detector is not None:
+        auto, rejected = auto_keyframes(records, (info.width, info.height),
+                                        min_confidence=float(cal_cfg.get("auto_min_confidence", 0.5)))
+        print(f"Automatic calibration: {len(auto)} keyframe(s) from {len(auto) + len(rejected)} checked frames")
+        if rejected:
+            common = max(set(rejected.values()), key=list(rejected.values()).count)
+            print(f"  {len(rejected)} rejected, most often: {common}")
+        keyframes = (keyframes.merged_with(auto) if keyframes is not None else auto) if len(auto) else keyframes
     calibs = solve(records, keyframes, (info.width, info.height), track_camera, cam_cfg.get("max_gap", 10), cuts)
     if keyframes is not None:
         covered = sum(c is not None for c in calibs)
