@@ -112,7 +112,9 @@ Attackers past the opponents' line are tagged **OFFSIDE POS** with their margin 
 (also ringed on the minimap); those within `offside: tolerance_m` (default 0.3 m) of the line
 are **TOO CLOSE** to call. `tracks.csv` gets `offside_status` and `offside_margin_m` columns.
 Being in an offside position is only an offence when a teammate plays the ball; positions
-are measured at the feet (head and body need pose detection, not done yet).
+are measured at the feet by default. With `offside: body_parts_model: yolov8m-pose.pt`, a pose
+model runs on a crop around every tracked player and offside is judged by the body part nearest
+the goal line (head, body, legs and feet; arms don't count), dropped to the ground under it.
 
 ### Offside calls
 From the ball path, `pitchlens-track` finds every pass, freezes the moment the ball is played,

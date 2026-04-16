@@ -56,10 +56,15 @@ def check_against_line(positions: np.ndarray, teams: np.ndarray, line: OffsideLi
 
 
 def check_frame(positions: np.ndarray, teams: np.ndarray, lines: dict[int, OffsideLine],
-                tolerance_m: float = DEFAULT_TOLERANCE_M) -> dict[int, PositionCheck]:
-    """Every attacker in the frame, judged against the opponents' line. Keyed by player index."""
+                tolerance_m: float = DEFAULT_TOLERANCE_M,
+                toward_goal: dict[bool, np.ndarray] | None = None) -> dict[int, PositionCheck]:
+    """Every attacker in the frame, judged against the opponents' line. Keyed by player index.
+
+    toward_goal: body-part positions per goal (goal_at_left -> positions), used when given.
+    """
     out = {}
     for line in lines.values():
-        for check in check_against_line(positions, teams, line, tolerance_m):
+        pos = toward_goal.get(line.defends_left, positions) if toward_goal else positions
+        for check in check_against_line(pos, teams, line, tolerance_m):
             out[check.player_index] = check
     return out

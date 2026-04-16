@@ -27,6 +27,15 @@ class FramePlayers:
     positions: np.ndarray    # (N, 2) pitch meters (NaN = unknown)
     teams: np.ndarray        # (N,)
     track_ids: np.ndarray    # (N,)
+    # optional, for offside by body parts: goal_at_left -> positions with x moved to each
+    # player's counting body part nearest that goal (see offside/body_parts.py)
+    toward_goal: dict[bool, np.ndarray] | None = None
+
+    def positions_toward(self, goal_at_left: bool) -> np.ndarray:
+        """Positions to judge offside toward a goal: body parts if known, else the feet."""
+        if self.toward_goal and goal_at_left in self.toward_goal:
+            return self.toward_goal[goal_at_left]
+        return self.positions
 
 
 @dataclass

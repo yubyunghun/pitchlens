@@ -23,6 +23,7 @@ minimap:
 offside:
   draw_in_video: true     # VAR-style line of the team defending near the ball + tags on attackers
   tolerance_m: 0.3        # attackers this close to the line are "too close to call"
+  body_parts_model: null   # e.g. yolov8m-pose.pt: judge offside by head/body/legs (not arms) instead of feet
 tactics:
   min_seconds: 2.0        # a player must be seen this long (per phase) to count in a formation
   timeline_window_s: 15.0 # formation over time: window length...

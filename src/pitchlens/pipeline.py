@@ -32,6 +32,7 @@ from pitchlens.calibration.shot_cuts import AppearanceChange, find_cuts
 from pitchlens.detection.classes import CLASS_NAMES, REFEREE
 from pitchlens.offside.direction import DirectionEstimate, infer_attack_directions
 from pitchlens.offside.line import active_defending_team, frame_offside_lines
+from pitchlens.offside.body_parts import positions_toward_goal
 from pitchlens.offside.incidents import (banner_frames, find_offside_incidents, summarize_incidents,
                                          write_incidents_csv)
 from pitchlens.offside.passes import FramePlayers, detect_touches, find_passes
@@ -67,6 +68,15 @@ class FrameRecord:
     motion: np.ndarray | None    # camera motion from the previous frame (None if unknown)
     change: float = 0.0          # appearance change from the previous frame (0..1), for cut detection
     pitch_keypoints: np.ndarray | None = None   # (33, 3) landmark predictions, on frames where they were run
+    poses: list | None = None    # per tracked player: (17, 3) body keypoints or None (offside by body parts)
+
+
+def toward_goal(rec: "FrameRecord", calib, pitch_xy: np.ndarray) -> dict[bool, np.ndarray] | None:
+    """Body-part positions toward each goal for a frame with poses (None without poses / calibration)."""
+    if rec.poses is None or calib is None or len(rec.poses) != len(pitch_xy):
+        return None
+    return {g: positions_toward_goal(pitch_xy, rec.poses, rec.players.xyxy, calib, goal_at_left=g)
+            for g in (True, False)}
 
 
 def foot_points(xyxy: np.ndarray) -> np.ndarray:
@@ -98,11 +108,13 @@ def load_keyframes(path: str | None, info: sv.VideoInfo) -> CalibrationSet | Non
 
 
 def analyze(video: str, detector, assigner: TeamAssigner, fps: float, track_camera: bool = True,
-            total: int | None = None, keypoint_detector=None, keypoint_every: int = 25) -> list[FrameRecord]:
+            total: int | None = None, keypoint_detector=None, keypoint_every: int = 25,
+            pose_detector=None) -> list[FrameRecord]:
     """Pass 1: detection, tracking, teams and camera motion for every frame.
 
     keypoint_detector: optional pitch-landmark model, run on every `keypoint_every`-th frame
                        (its predictions become automatic calibration keyframes).
+    pose_detector:     optional body-pose model, run on every tracked player (offside by body parts).
     """
     tracker = PlayerTracker(fps=fps)
     camera = CameraMotionTracker() if track_camera else None
@@ -126,7 +138,8 @@ def analyze(video: str, detector, assigner: TeamAssigner, fps: float, track_came
             keypoints = keypoint_detector.predict(frame)
             if keypoints is None:
                 keypoints = np.zeros((0, 3))                 # run, but no pitch found
-        records.append(FrameRecord(players, teams, dets.ball, motion, appearance.update(frame), keypoints))
+        poses = pose_detector.predict_players(frame, players.xyxy) if pose_detector is not None else None
+        records.append(FrameRecord(players, teams, dets.ball, motion, appearance.update(frame), keypoints, poses))
     return records
 
 
@@ -173,7 +186,7 @@ def offside_inputs(records: list[FrameRecord], calibs: list[FrameCalibration | N
         feet = foot_points(rec.players.xyxy)
         pos = fc.calib.to_pitch(feet) if fc else np.full_like(feet, np.nan)
         ids = rec.players.tracker_id if rec.players.tracker_id is not None else np.zeros(0, int)
-        players.append(FramePlayers(pos, rec.teams, ids))
+        players.append(FramePlayers(pos, rec.teams, ids, toward_goal(rec, fc.calib if fc else None, pos)))
         ball_raw.append(fc.calib.to_pitch(foot_points(rec.ball.xyxy))[0] if fc and len(rec.ball) else None)
         frame_calibs.append(fc.calib if fc else None)
         classes.append(rec.players.class_id)
@@ -321,10 +334,11 @@ def render(video: str, dst: str, info: sv.VideoInfo, records: list[FrameRecord],
                 if fc and ball_path_xy is not None and np.isfinite(ball_path_xy[idx]).all():
                     ball_xy = ball_path_xy[idx]       # cleaned path: fewer misses, no false detections
                 lines = {}
+                body = toward_goal(rec, fc.calib if fc else None, pitch_xy)
                 if fc and directions is not None:
                     lines = frame_offside_lines(pitch_xy, rec.teams, directions, fc.calib, ball_xy,
-                                                rec.players.class_id)
-                checks = check_frame(pitch_xy, rec.teams, lines, offside_tolerance_m) if lines else {}
+                                                rec.players.class_id, body)
+                checks = check_frame(pitch_xy, rec.teams, lines, offside_tolerance_m, body) if lines else {}
 
                 base = frame
                 active = active_defending_team(lines, ball_xy, pitch_xy) if offside_in_video else None
@@ -421,8 +435,12 @@ def run(config: dict) -> None:
         from pitchlens.calibration.keypoint_model import KeypointDetector
         keypoint_detector = KeypointDetector(cal_cfg["auto_model"], det_cfg.get("device"))
     keypoint_every = max(1, int(round(float(cal_cfg.get("auto_every_s", 1.0)) * info.fps)))
+    pose_detector = None
+    if (config.get("offside") or {}).get("body_parts_model"):
+        from pitchlens.offside.pose_model import PoseDetector
+        pose_detector = PoseDetector(config["offside"]["body_parts_model"], det_cfg.get("device"))
     records = analyze(src, detector, assigner, info.fps, track_camera, info.total_frames,
-                      keypoint_detector, keypoint_every)
+                      keypoint_detector, keypoint_every, pose_detector)
 
     cuts = detect_cuts(records) if track_camera else []
     if cuts:

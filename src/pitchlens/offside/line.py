@@ -118,12 +118,18 @@ def active_defending_team(lines: dict[int, OffsideLine], ball: np.ndarray | None
 
 def frame_offside_lines(positions: np.ndarray, teams: np.ndarray, directions: DirectionEstimate,
                         calib: PitchCalibration, ball: np.ndarray | None = None,
-                        classes: np.ndarray | None = None) -> dict[int, OffsideLine]:
-    """Offside line for every team in one frame (teams whose line can't be found are left out)."""
+                        classes: np.ndarray | None = None,
+                        toward_goal: dict[bool, np.ndarray] | None = None) -> dict[int, OffsideLine]:
+    """Offside line for every team in one frame (teams whose line can't be found are left out).
+
+    toward_goal: body-part positions per goal (goal_at_left -> positions); used instead of `positions`
+                 for the goal each team defends when given.
+    """
     out = {}
     for team, attack in directions.directions.items():
         defends_left = attack == ATTACKS_RIGHT
-        line = offside_line(positions, teams, team, defends_left, calib.pitch, ball,
+        pos = toward_goal.get(defends_left, positions) if toward_goal else positions
+        line = offside_line(pos, teams, team, defends_left, calib.pitch, ball,
                             goal_area_in_view(calib, defends_left), classes)
         if line is not None:
             out[team] = line

@@ -41,7 +41,7 @@ def freeze_pass(p: Pass, players: list[FramePlayers], lines: list[dict[int, Offs
         return FrozenFrame(t, team, None)
     fp = players[t]
     checks = {}
-    for c in check_against_line(fp.positions, fp.teams, line, tolerance_m):
+    for c in check_against_line(fp.positions_toward(line.defends_left), fp.teams, line, tolerance_m):
         tid = int(fp.track_ids[c.player_index])
         if tid != p.kick.track_id:            # the passer is not judged on their own pass
             checks[tid] = c

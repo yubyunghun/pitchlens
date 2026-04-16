@@ -42,7 +42,8 @@ def find_offside_incidents(players: list[FramePlayers], ball_raw: Sequence[np.nd
             lines.append({})
             continue
         ball = path.positions[t] if np.isfinite(path.positions[t]).all() else None
-        lines.append(frame_offside_lines(fp.positions, fp.teams, directions, calib, ball, classes[t]))
+        lines.append(frame_offside_lines(fp.positions, fp.teams, directions, calib, ball, classes[t],
+                                         fp.toward_goal))
     passes = find_passes(detect_touches(path, players))
     decisions = [decide(p, freeze_pass(p, players, lines, tolerance_m)) for p in passes]
     return path, lines, decisions
