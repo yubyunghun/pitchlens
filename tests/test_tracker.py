@@ -40,3 +40,24 @@ def test_id_survives_short_occlusion_and_low_conf():
 
 def test_empty_frame():
     assert len(PlayerTracker().update(_dets([]))) == 0
+
+
+def test_coast_moves_tracks_between_detections():
+    tracker = PlayerTracker(fps=25)
+    box = lambda f: [100 + 4 * f, 50, 130 + 4 * f, 130]
+    for f in range(4):                                      # detected every frame: velocity learnt
+        out = tracker.update(_dets([box(f)]))
+    tid = out.tracker_id[0]
+    coasted = tracker.coast(since_detection=1)              # frame 4 not detected
+    assert list(coasted.tracker_id) == [tid] and coasted.class_id[0] == 2
+    assert np.allclose(coasted.xyxy[0], box(4), atol=1.0)   # moved by the tracked velocity
+    out = tracker.update(_dets([box(5)]))                   # frame 5 detected again: same id
+    assert list(out.tracker_id) == [tid]
+
+
+def test_coast_hides_tracks_already_lost():
+    tracker = PlayerTracker(fps=25)
+    for f in range(3):
+        tracker.update(_dets([[100, 50, 130, 130]]))
+    tracker.update(_dets([]))                               # player missed on a detected frame
+    assert len(tracker.coast(since_detection=1)) == 0        # not shown while coasting either

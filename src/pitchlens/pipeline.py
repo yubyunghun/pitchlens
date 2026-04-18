@@ -109,28 +109,38 @@ def load_keyframes(path: str | None, info: sv.VideoInfo) -> CalibrationSet | Non
 
 def analyze(video: str, detector, assigner: TeamAssigner, fps: float, track_camera: bool = True,
             total: int | None = None, keypoint_detector=None, keypoint_every: int = 25,
-            pose_detector=None) -> list[FrameRecord]:
+            pose_detector=None, detect_every: int = 1) -> list[FrameRecord]:
     """Pass 1: detection, tracking, teams and camera motion for every frame.
 
     keypoint_detector: optional pitch-landmark model, run on every `keypoint_every`-th frame
                        (its predictions become automatic calibration keyframes).
     pose_detector:     optional body-pose model, run on every tracked player (offside by body parts).
+    detect_every:      run the detector (and pose model) only on every Nth frame, for speed; in
+                       between, players move by their tracked velocity and the ball path fills the gap.
     """
     tracker = PlayerTracker(fps=fps)
     camera = CameraMotionTracker() if track_camera else None
     appearance = AppearanceChange()
+    detect_every = max(1, int(detect_every))
     records = []
+    last_detected = 0
     for t, frame in enumerate(tqdm(sv.get_video_frames_generator(video), total=total, desc="Analyzing")):
-        dets = detector.detect(frame)
-        players = tracker.update(dets.players)
+        detected = t % detect_every == 0
+        if detected:
+            dets = detector.detect(frame)
+            players, ball = tracker.update(dets.players), dets.ball
+            # cut out everything that moves by itself (raw detections, so untracked players count too)
+            moving = np.vstack([dets.players.xyxy.reshape(-1, 4), dets.ball.xyxy.reshape(-1, 4)])
+            last_detected = t
+        else:
+            players, ball = tracker.coast(t - last_detected), sv.Detections.empty()
+            moving = players.xyxy.reshape(-1, 4)
         teams = np.full(len(players), UNKNOWN, dtype=int)
         not_ref = players.class_id != REFEREE
         if not_ref.any():
             teams[not_ref] = assigner.assign(frame, players.xyxy[not_ref], players.tracker_id[not_ref])
         motion = None
         if camera is not None:
-            # cut out everything that moves by itself (raw detections, so untracked players count too)
-            moving = np.vstack([dets.players.xyxy.reshape(-1, 4), dets.ball.xyxy.reshape(-1, 4)])
             result = camera.update(frame, moving)
             motion = result.H if result is not None else None
         keypoints = None                                     # None = model not run on this frame
@@ -138,8 +148,10 @@ def analyze(video: str, detector, assigner: TeamAssigner, fps: float, track_came
             keypoints = keypoint_detector.predict(frame)
             if keypoints is None:
                 keypoints = np.zeros((0, 3))                 # run, but no pitch found
-        poses = pose_detector.predict_players(frame, players.xyxy) if pose_detector is not None else None
-        records.append(FrameRecord(players, teams, dets.ball, motion, appearance.update(frame), keypoints, poses))
+        poses = None
+        if pose_detector is not None and detected:
+            poses = pose_detector.predict_players(frame, players.xyxy)
+        records.append(FrameRecord(players, teams, ball, motion, appearance.update(frame), keypoints, poses))
     return records
 
 
@@ -440,7 +452,8 @@ def run(config: dict) -> None:
         from pitchlens.offside.pose_model import PoseDetector
         pose_detector = PoseDetector(config["offside"]["body_parts_model"], det_cfg.get("device"))
     records = analyze(src, detector, assigner, info.fps, track_camera, info.total_frames,
-                      keypoint_detector, keypoint_every, pose_detector)
+                      keypoint_detector, keypoint_every, pose_detector,
+                      detect_every=int(det_cfg.get("detect_every", 1)))
 
     cuts = detect_cuts(records) if track_camera else []
     if cuts:

@@ -167,6 +167,12 @@ gives a passing profile (completed / forward / line-breaking / best option taken
 number of open lanes on the ball, and, on defence, how many open forward lanes the team allowed.
 Printed by `pitchlens-track` and saved per pass to `outputs/pass_choices.csv`.
 
+### Speed
+Detection is the slowest step. `detection: detect_every: 2` runs it on every other frame only;
+in between, players move by their tracked velocity and the ball path fills the gap. On the
+synthetic test clip, positions were as accurate as detecting every frame (mean 0.13 m), and
+`detect_every: 3` was close (0.16 m); fast, erratic movement will suffer more on real footage.
+
 ### Match report
 At the end of a run, `outputs/report.html` collects everything in one self-contained page
 (images embedded, so the single file can be shared): overview, formations with charts,

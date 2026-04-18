@@ -9,6 +9,7 @@ detection:
   ball_tiles: false        # also search for the ball on full-resolution tiles (slower, finds small balls)
   tile_size: 640           # tile size in px (use the model's training imgsz)
   tile_overlap: 0.2        # tiles overlap so a ball on a border is fully inside one
+  detect_every: 1          # run detection on every Nth frame only (2 = about twice as fast); tracking fills the gaps
 camera_motion:
   enabled: true          # follow camera pans/zooms; false = static camera
   max_gap: 10            # failed motion estimates in a row before the chain breaks
