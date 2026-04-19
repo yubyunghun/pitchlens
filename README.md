@@ -172,6 +172,9 @@ Detection is the slowest step. `detection: detect_every: 2` runs it on every oth
 in between, players move by their tracked velocity and the ball path fills the gap. On the
 synthetic test clip, positions were as accurate as detecting every frame (mean 0.13 m), and
 `detect_every: 3` was close (0.16 m); fast, erratic movement will suffer more on real footage.
+On a GPU, `detection: batch: 8` runs detection on 8 frames per call. Each run ends with the
+time spent per stage (detection, tracking, camera motion, rendering, ...), so you can see
+what to tune.
 
 ### Match report
 At the end of a run, `outputs/report.html` collects everything in one self-contained page

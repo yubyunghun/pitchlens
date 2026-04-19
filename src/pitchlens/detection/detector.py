@@ -54,8 +54,18 @@ class Detector:
         return dets
 
     def detect(self, frame: np.ndarray) -> FrameDetections:
+        return self.detect_batch([frame])[0]
+
+    def detect_batch(self, frames: list[np.ndarray]) -> list[FrameDetections]:
+        """Several frames in one model call (much faster on a GPU), then each processed as in detect()."""
+        if not frames:
+            return []
         # Run at the lower ball threshold; players are filtered afterwards.
-        dets = self._to_pitchlens(self._run(frame, min(self.confidence, self.ball_confidence))[0])
+        raw = self._run(frames if len(frames) > 1 else frames[0], min(self.confidence, self.ball_confidence))
+        return [self._postprocess(r, f) for r, f in zip(raw, frames)]
+
+    def _postprocess(self, raw: sv.Detections, frame: np.ndarray) -> FrameDetections:
+        dets = self._to_pitchlens(raw)
         ball = dets[dets.class_id == BALL]
 
         if self.ball_tiles and self._ball_ids:

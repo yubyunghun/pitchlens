@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import time
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
@@ -42,6 +43,7 @@ from pitchlens.tactics.pass_choice import analyze_passes, summarize_passing, tea
 from pitchlens.tactics.passing_lanes import LaneModel
 from pitchlens.calibration.pitch import Pitch
 from pitchlens.report.match_report import ReportData, TeamInfo, write_report
+from pitchlens.timing import StageTimer
 from pitchlens.tactics.possession import ALL, possession_by_frame
 from pitchlens.tactics.report import (formation_chart, formation_report, save_formation_charts,
                                       summarize_formations, write_average_positions_csv)
@@ -109,7 +111,8 @@ def load_keyframes(path: str | None, info: sv.VideoInfo) -> CalibrationSet | Non
 
 def analyze(video: str, detector, assigner: TeamAssigner, fps: float, track_camera: bool = True,
             total: int | None = None, keypoint_detector=None, keypoint_every: int = 25,
-            pose_detector=None, detect_every: int = 1) -> list[FrameRecord]:
+            pose_detector=None, detect_every: int = 1, batch: int = 1,
+            timer: StageTimer | None = None) -> list[FrameRecord]:
     """Pass 1: detection, tracking, teams and camera motion for every frame.
 
     keypoint_detector: optional pitch-landmark model, run on every `keypoint_every`-th frame
@@ -117,41 +120,65 @@ def analyze(video: str, detector, assigner: TeamAssigner, fps: float, track_came
     pose_detector:     optional body-pose model, run on every tracked player (offside by body parts).
     detect_every:      run the detector (and pose model) only on every Nth frame, for speed; in
                        between, players move by their tracked velocity and the ball path fills the gap.
+    batch:             frames per detector call (several at once is much faster on a GPU).
+    timer:             collects time per stage (see timing.py).
     """
+    timer = timer or StageTimer()
     tracker = PlayerTracker(fps=fps)
     camera = CameraMotionTracker() if track_camera else None
     appearance = AppearanceChange()
-    detect_every = max(1, int(detect_every))
+    detect_every, batch = max(1, int(detect_every)), max(1, int(batch))
     records = []
     last_detected = 0
-    for t, frame in enumerate(tqdm(sv.get_video_frames_generator(video), total=total, desc="Analyzing")):
-        detected = t % detect_every == 0
-        if detected:
-            dets = detector.detect(frame)
-            players, ball = tracker.update(dets.players), dets.ball
-            # cut out everything that moves by itself (raw detections, so untracked players count too)
-            moving = np.vstack([dets.players.xyxy.reshape(-1, 4), dets.ball.xyxy.reshape(-1, 4)])
-            last_detected = t
-        else:
-            players, ball = tracker.coast(t - last_detected), sv.Detections.empty()
-            moving = players.xyxy.reshape(-1, 4)
-        teams = np.full(len(players), UNKNOWN, dtype=int)
-        not_ref = players.class_id != REFEREE
-        if not_ref.any():
-            teams[not_ref] = assigner.assign(frame, players.xyxy[not_ref], players.tracker_id[not_ref])
-        motion = None
-        if camera is not None:
-            result = camera.update(frame, moving)
-            motion = result.H if result is not None else None
-        keypoints = None                                     # None = model not run on this frame
-        if keypoint_detector is not None and t % max(1, keypoint_every) == 0:
-            keypoints = keypoint_detector.predict(frame)
-            if keypoints is None:
-                keypoints = np.zeros((0, 3))                 # run, but no pitch found
-        poses = None
-        if pose_detector is not None and detected:
-            poses = pose_detector.predict_players(frame, players.xyxy)
-        records.append(FrameRecord(players, teams, ball, motion, appearance.update(frame), keypoints, poses))
+    progress = tqdm(total=total, desc="Analyzing")
+    frames = iter(sv.get_video_frames_generator(video))
+    t = 0
+    while True:
+        chunk = list(islice(frames, batch))
+        if not chunk:
+            break
+        want = [i for i in range(len(chunk)) if (t + i) % detect_every == 0]
+        with timer("detection"):
+            if hasattr(detector, "detect_batch"):
+                found = detector.detect_batch([chunk[i] for i in want])
+            else:
+                found = [detector.detect(chunk[i]) for i in want]
+        detections = dict(zip(want, found))
+        for i, frame in enumerate(chunk):
+            with timer("tracking + teams"):
+                dets = detections.get(i)
+                if dets is not None:
+                    players, ball = tracker.update(dets.players), dets.ball
+                    # cut out everything that moves by itself (raw detections, so untracked players count too)
+                    moving = np.vstack([dets.players.xyxy.reshape(-1, 4), dets.ball.xyxy.reshape(-1, 4)])
+                    last_detected = t
+                else:
+                    players, ball = tracker.coast(t - last_detected), sv.Detections.empty()
+                    moving = players.xyxy.reshape(-1, 4)
+                teams = np.full(len(players), UNKNOWN, dtype=int)
+                not_ref = players.class_id != REFEREE
+                if not_ref.any():
+                    teams[not_ref] = assigner.assign(frame, players.xyxy[not_ref], players.tracker_id[not_ref])
+            motion = None
+            with timer("camera motion + cuts"):
+                if camera is not None:
+                    result = camera.update(frame, moving)
+                    motion = result.H if result is not None else None
+                change = appearance.update(frame)
+            keypoints = None                                     # None = model not run on this frame
+            if keypoint_detector is not None and t % max(1, keypoint_every) == 0:
+                with timer("pitch landmarks"):
+                    keypoints = keypoint_detector.predict(frame)
+                if keypoints is None:
+                    keypoints = np.zeros((0, 3))                 # run, but no pitch found
+            poses = None
+            if pose_detector is not None and dets is not None:
+                with timer("body poses"):
+                    poses = pose_detector.predict_players(frame, players.xyxy)
+            records.append(FrameRecord(players, teams, ball, motion, change, keypoints, poses))
+            t += 1
+            progress.update(1)
+    progress.close()
     return records
 
 
@@ -437,8 +464,11 @@ def run(config: dict) -> None:
     cam_cfg = config.get("camera_motion") or {}
     track_camera = cam_cfg.get("enabled", True)
 
+    timer, clock = StageTimer(), time.perf_counter
     print("Learning team colors...")
+    t0 = clock()
     assigner = fit_teams(detector, src)
+    timer.add("team colors", clock() - t0)
 
     info = sv.VideoInfo.from_video_path(src)
     cal_cfg = config.get("calibration") or {}
@@ -453,7 +483,9 @@ def run(config: dict) -> None:
         pose_detector = PoseDetector(config["offside"]["body_parts_model"], det_cfg.get("device"))
     records = analyze(src, detector, assigner, info.fps, track_camera, info.total_frames,
                       keypoint_detector, keypoint_every, pose_detector,
-                      detect_every=int(det_cfg.get("detect_every", 1)))
+                      detect_every=int(det_cfg.get("detect_every", 1)), batch=int(det_cfg.get("batch", 1)),
+                      timer=timer)
+    t0 = clock()
 
     cuts = detect_cuts(records) if track_camera else []
     if cuts:
@@ -489,6 +521,8 @@ def run(config: dict) -> None:
     elif keyframes is not None:
         print("Attacking directions: not enough calibrated frames with players from both teams")
 
+    timer.add("calibration", clock() - t0)
+    t0 = clock()
     off_cfg = config.get("offside") or {}
     tolerance = float(off_cfg.get("tolerance_m", DEFAULT_TOLERANCE_M))
     export = config.get("export") or {}
@@ -549,6 +583,7 @@ def run(config: dict) -> None:
             write_pass_choices_csv(export["pass_choices_csv"], choices, info.fps)
             print(f"  Saved {export['pass_choices_csv']}")
 
+    timer.add("offside + tactics", clock() - t0)
     mm_cfg = config.get("minimap") or {}
     minimap = None
     if keyframes is not None and mm_cfg.get("enabled", True):
@@ -558,6 +593,7 @@ def run(config: dict) -> None:
     csv_path = export.get("tracks_csv")
     debug = bool((config.get("debug") or {}).get("pitch_overlay", False))
     lane_cfg = config.get("passing_lanes") or {}
+    t0 = clock()
     scores = render(src, dst, info, records, calibs, assigner.team_colors_bgr, minimap, csv_path,
                     debug=debug, cuts=cuts, directions=directions,
                     offside_in_video=bool(off_cfg.get("draw_in_video", True)),
@@ -565,6 +601,7 @@ def run(config: dict) -> None:
                     freeze=freeze, freeze_dir=export.get("incident_images"), lane_options=lane_options,
                     lanes_in_video=bool(lane_cfg.get("draw_in_video", True)),
                     lanes_on_minimap=bool(lane_cfg.get("draw_on_minimap", True)))
+    timer.add("rendering", clock() - t0)
     print(f"Saved {dst}" + (f" and {csv_path}" if csv_path else ""))
     if freeze and export.get("incident_images"):
         n = sum(len(v) for v in freeze.values())
@@ -577,6 +614,7 @@ def run(config: dict) -> None:
                                  0 if keyframes is None else len(keyframes), cuts, report, segments, metrics,
                                  passing_stats, decisions, export.get("incident_images"), pitch)
         print(f"Saved match report {write_report(export['report_html'], data)}")
+    print(timer.summary(frames=len(records)))
 
 
 def build_report_data(video: str, fps: float, n_frames: int, team_colors: dict,
